@@ -1,4 +1,4 @@
-import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Plus, PowerOff, Search, Server, Settings } from 'lucide-react'
+import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Pencil, Plus, PowerOff, Search, Server, Settings } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { ACCENT_PALETTE, type MachineSnapshot, type ProjectRecord, type RepoCatalog } from '@/features/skills/model/skills'
 
@@ -23,6 +23,7 @@ type SidebarProps = {
   onAddRepo: () => void
   onSelectMachine: (name: string) => void
   onAddMachine: () => void
+  onEditMachine: (name: string) => void
   onOpenSettings: () => void
 }
 
@@ -35,7 +36,7 @@ const NAV: Array<{ key: FilterKey; label: string; icon: ComponentType<{ classNam
   { key: 'disabled', label: 'Disabled', icon: PowerOff },
 ]
 
-export function Sidebar({ active, counts, projects, repos, activeRepo, machines, activeMachine, query, onQuery, onFilter, onSelectRepo, onAddRepo, onSelectMachine, onAddMachine, onOpenSettings }: SidebarProps) {
+export function Sidebar({ active, counts, projects, repos, activeRepo, machines, activeMachine, query, onQuery, onFilter, onSelectRepo, onAddRepo, onSelectMachine, onAddMachine, onEditMachine, onOpenSettings }: SidebarProps) {
   return (
     <aside className="flex w-[248px] shrink-0 flex-col border-r border-[#1c1c20] bg-[#0b0b0d] px-3 py-3.5">
       <div className="flex items-center gap-2.5 px-2 pb-3.5 pt-1.5">
@@ -153,11 +154,20 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, machines,
           machines.map((entry) => {
             const isActive = activeMachine === entry.machine.name
             return (
-              <button
+              // Row is a div (not a button) so the edit affordance can nest a
+              // real button inside; the row itself stays keyboard-selectable.
+              <div
                 key={entry.machine.name}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelectMachine(entry.machine.name)}
-                className={`flex items-center gap-3 rounded-[9px] px-2 py-2 text-[13px] font-medium transition ${
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onSelectMachine(entry.machine.name)
+                  }
+                }}
+                className={`group flex cursor-pointer items-center gap-3 rounded-[9px] px-2 py-2 text-[13px] font-medium transition ${
                   isActive
                     ? 'bg-[#1a1109] text-[#fb923c] shadow-[inset_2px_0_0_#f97316]'
                     : 'text-[#a1a1aa] hover:bg-[#141417]'
@@ -166,15 +176,39 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, machines,
                 <span className="flex w-[18px] justify-center">
                   <Server className="size-[15px]" />
                 </span>
-                <span className="flex-1 truncate text-left">{entry.machine.name}</span>
-                {entry.error ? (
-                  <AlertCircle className="size-3.5 shrink-0 text-[#f87171]" />
-                ) : (
-                  <span className={`font-mono text-[11px] ${isActive ? 'text-[#fb923c]' : 'text-[#52525b]'}`}>
-                    {entry.snapshot?.skills.length ?? '…'}
+                <span className="flex-1 truncate text-left" title={`${entry.machine.user}@${entry.machine.host}`}>
+                  {entry.machine.name}
+                </span>
+                <span className="relative flex h-5 min-w-5 items-center justify-end">
+                  {/* Count (or error) by default; the pencil takes its place on hover/focus. */}
+                  <span className="flex items-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                    {entry.error ? (
+                      <AlertCircle className="size-3.5 shrink-0 text-[#f87171]" />
+                    ) : (
+                      <span className={`font-mono text-[11px] ${isActive ? 'text-[#fb923c]' : 'text-[#52525b]'}`}>
+                        {entry.snapshot?.skills.length ?? '…'}
+                      </span>
+                    )}
                   </span>
-                )}
-              </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onEditMachine(entry.machine.name)
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    aria-label={`Edit ${entry.machine.name}`}
+                    title="Rename or edit"
+                    className={`absolute right-0 grid size-5 place-items-center rounded-md opacity-0 transition focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 ${
+                      isActive
+                        ? 'text-[#fb923c] hover:bg-[#2a1a0c]'
+                        : 'text-[#71717a] hover:bg-[#1c1c20] hover:text-[#e4e4e7]'
+                    }`}
+                  >
+                    <Pencil className="size-3" />
+                  </button>
+                </span>
+              </div>
             )
           })
         )}

@@ -6,6 +6,8 @@ import type {
   MachineRecord,
   MachineSnapshot,
   RepoCatalog,
+  SetSkillEnabledInput,
+  SetSkillEnabledResult,
   SetSyndicationInput,
   SkillFile,
   SyndicationResult,
@@ -36,11 +38,13 @@ declare global {
         installRepoSkill(input: InstallRepoSkillInput): Promise<WorkspaceSnapshot>
         listMachineSnapshots(): Promise<MachineSnapshot[]>
         addMachine(machine: MachineRecord): Promise<MachineSnapshot[]>
+        updateMachine(name: string, machine: MachineRecord): Promise<MachineSnapshot[]>
         removeMachine(name: string): Promise<MachineSnapshot[]>
         refreshMachine(name: string): Promise<MachineSnapshot>
         installOnMachine(name: string, input: InstallRepoSkillInput): Promise<MachineSnapshot>
         machineSkillOp(name: string, op: 'enable' | 'disable' | 'remove', id: string): Promise<MachineSnapshot>
         setSyndication(input: SetSyndicationInput): Promise<SyndicationResult>
+        setSkillEnabled(input: SetSkillEnabledInput): Promise<SetSkillEnabledResult>
       }
     }
   }

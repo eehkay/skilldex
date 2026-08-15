@@ -155,6 +155,17 @@ export type SyndicationResult = {
   machine: MachineSnapshot
 }
 
+export type SetSkillEnabledInput = {
+  skillId: string
+  enabled: boolean
+  target: 'local' | 'everywhere' | { machine: string; scope: 'global' | 'project'; projectName?: string }
+}
+
+export type SetSkillEnabledResult = {
+  workspace: WorkspaceSnapshot
+  machines: MachineSnapshot[]
+}
+
 /**
  * UI scope shown on cards and filters. The mockup uses two scopes; we map our
  * three source kinds onto them: Personal → "global", Plugin → "plugin",

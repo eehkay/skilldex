@@ -80,6 +80,23 @@ export type SetSyndicationInput = {
   projectName?: string
 }
 
+export type SetSkillEnabledInput = {
+  /** Library skill id (its canonical path). */
+  skillId: string
+  enabled: boolean
+  /**
+   * Where to apply: just the local copy, one syndicated machine, or the
+   * local copy plus every syndicated machine.
+   */
+  target: 'local' | 'everywhere' | { machine: string; scope: 'global' | 'project'; projectName?: string }
+}
+
+export type SetSkillEnabledResult = {
+  workspace: WorkspaceSnapshot
+  /** Fresh snapshots for every machine that was touched. */
+  machines: MachineSnapshot[]
+}
+
 export type SkillWorkspace = {
   getConfig(): Promise<WorkspaceConfig>
   getSnapshot(): Promise<WorkspaceSnapshot>
@@ -114,6 +131,11 @@ export type SkillWorkspace = {
   listMachineSnapshots(): Promise<MachineSnapshot[]>
   /** Validate reachability (pushes the agent), then persist a new machine. */
   addMachine(machine: MachineRecord): Promise<MachineSnapshot[]>
+  /**
+   * Rename or re-point an existing machine. A changed host/user is pinged
+   * before saving; a rename carries the library's syndication targets along.
+   */
+  updateMachine(name: string, machine: MachineRecord): Promise<MachineSnapshot[]>
   /** Forget a machine (never touches its skills). */
   removeMachine(name: string): Promise<MachineSnapshot[]>
   /** Re-scan one machine. */
@@ -124,6 +146,8 @@ export type SkillWorkspace = {
   machineSkillOp(name: string, op: 'enable' | 'disable' | 'remove', id: string): Promise<MachineSnapshot>
   /** Syndicate a library skill to a machine (or uninstall it from one). */
   setSyndication(input: SetSyndicationInput): Promise<SyndicationResult>
+  /** Enable/disable with granular reach: locally, on one machine, or everywhere. */
+  setSkillEnabled(input: SetSkillEnabledInput): Promise<SetSkillEnabledResult>
 }
 
 /** Management is only meaningful for skills we own on disk, never plugin skills. */
@@ -535,6 +559,47 @@ export function createSkillWorkspace({
       return snapshotsFor(saved.machines)
     },
 
+    async updateMachine(name, machine) {
+      const next: MachineRecord = {
+        name: machine.name.trim(),
+        host: machine.host.trim(),
+        user: machine.user.trim(),
+      }
+      if (!next.name || !next.host || !next.user)
+        throw new Error('Machine name, host, and user are all required.')
+
+      const config = await configStore.load()
+      const current = config.machines.find((entry) => entry.name === name)
+      if (!current) throw new Error(`Unknown machine: ${name}`)
+      if (next.name !== name && config.machines.some((entry) => entry.name === next.name))
+        throw new Error(`A machine named "${next.name}" already exists.`)
+
+      // Only a changed login target needs to prove itself; a pure rename
+      // shouldn't fail because the box happens to be asleep right now.
+      if (next.host !== current.host || next.user !== current.user) await machines().ping(next)
+
+      const saved = await configStore.save({
+        ...config,
+        machines: config.machines.map((entry) => (entry.name === name ? next : entry)),
+      })
+
+      if (next.name !== name) {
+        // Syndication targets reference machines by name — follow the rename
+        // so the library keeps knowing where each skill lives.
+        const ledger = await libraryStore.load()
+        for (const [dirName, meta] of Object.entries(ledger)) {
+          if (!meta.targets.some((target) => target.machine === name)) continue
+          await libraryStore.set(dirName, {
+            ...meta,
+            targets: meta.targets.map((target) =>
+              target.machine === name ? { ...target, machine: next.name } : target,
+            ),
+          })
+        }
+      }
+      return snapshotsFor(saved.machines)
+    },
+
     async removeMachine(name) {
       const config = await configStore.load()
       const saved = await configStore.save({
@@ -613,11 +678,64 @@ export function createSkillWorkspace({
         machine: { machine, snapshot },
       }
     },
+
+    async setSkillEnabled(input) {
+      const skill = await resolveKnown(input.skillId)
+      assertManageable(skill)
+      const dirName = path.basename(skill.realPath)
+      const config = await configStore.load()
+      const touched: MachineSnapshot[] = []
+
+      const applyLocal = async () => {
+        if (input.enabled && !skill.enabled) await enableSkillDir(skill.path)
+        if (!input.enabled && skill.enabled) await disableSkillDir(skill.path)
+      }
+
+      if (input.target === 'local') {
+        await applyLocal()
+      } else if (input.target === 'everywhere') {
+        // Machines first: if one is unreachable we fail before touching the
+        // local copy, so the visible state never silently diverges.
+        const meta = skill.sourceKind === 'Personal' ? (await libraryStore.load())[dirName] : undefined
+        const failures: string[] = []
+        for (const target of meta?.targets ?? []) {
+          const machine = config.machines.find((entry) => entry.name === target.machine)
+          if (!machine) continue
+          try {
+            const snapshot = await machines().setEnabled(machine, {
+              dirName,
+              scope: target.scope,
+              projectName: target.projectName,
+              enabled: input.enabled,
+            })
+            touched.push({ machine, snapshot })
+          } catch (cause) {
+            failures.push(`${target.machine}: ${cause instanceof Error ? cause.message : String(cause)}`)
+          }
+        }
+        if (failures.length > 0)
+          throw new Error(
+            `Could not ${input.enabled ? 'enable' : 'disable'} on every machine — ${failures.join('; ')}. Local copy left unchanged; try again.`,
+          )
+        await applyLocal()
+      } else {
+        const machine = await findMachine(input.target.machine)
+        const snapshot = await machines().setEnabled(machine, {
+          dirName,
+          scope: input.target.scope,
+          projectName: input.target.projectName,
+          enabled: input.enabled,
+        })
+        touched.push({ machine, snapshot })
+      }
+
+      return { workspace: await buildSnapshot(config), machines: touched }
+    },
   }
 }
 
 function targetKey(target: SyndicationTarget): string {
-  return `${target.machine} ${target.scope} ${target.projectName ?? ''}`
+  return `${target.machine}\u0000${target.scope}\u0000${target.projectName ?? ''}`
 }
 
 function withTarget(targets: SyndicationTarget[], target: SyndicationTarget): SyndicationTarget[] {

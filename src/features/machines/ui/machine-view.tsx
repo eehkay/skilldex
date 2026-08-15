@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertCircle, FileText, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertCircle, FileText, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { iconColorsFor, monoFor, scopePillClass, toSkill, type MachineSnapshot, type Skill } from '@/features/skills/model/skills'
 import { SkillToggle } from '@/features/skills/ui/skill-toggle'
 
@@ -17,6 +17,7 @@ type MachineViewProps = {
   entry: MachineSnapshot
   busy: boolean
   onRefresh: () => void
+  onEdit: () => void
   onRemove: () => void
   onSkillOp: (op: 'enable' | 'disable' | 'remove', id: string) => void
 }
@@ -26,7 +27,7 @@ type MachineViewProps = {
  * enable/disable/remove. Read/detail affordances stay local-only for now —
  * this pane is about what's installed where.
  */
-export function MachineView({ entry, busy, onRefresh, onRemove, onSkillOp }: MachineViewProps) {
+export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillOp }: MachineViewProps) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<MachineFilter>('all')
   const skills = useMemo(
@@ -84,6 +85,15 @@ export function MachineView({ entry, busy, onRefresh, onRemove, onSkillOp }: Mac
           >
             <RefreshCw className={`size-3.5 ${busy ? 'animate-spin' : ''}`} />
             Refresh
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            disabled={busy}
+            className="flex h-[34px] items-center gap-1.5 rounded-[9px] border border-[#27272a] bg-[#18181b] px-3 text-[12.5px] font-medium text-[#e4e4e7] transition hover:border-[#3a3a42] disabled:opacity-60"
+          >
+            <Pencil className="size-3.5" />
+            Edit
           </button>
           <button
             type="button"

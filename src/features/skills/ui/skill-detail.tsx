@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Server } from 'lucide-react'
-import { scopePillClass, shortRef, type MachineSnapshot, type SetSyndicationInput, type Skill, type SkillFile } from '../model/skills'
+import { scopePillClass, shortRef, type MachineSnapshot, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillFile } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
 
@@ -15,6 +15,7 @@ type SkillDetailProps = {
   onToggleFavourite: () => void
   onRemove: () => void
   onSetSyndication: (input: SetSyndicationInput) => Promise<void>
+  onSetSkillEnabled: (input: SetSkillEnabledInput) => Promise<void>
   onBack: () => void
 }
 
@@ -26,7 +27,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onBack }: SkillDetailProps) {
+export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onBack }: SkillDetailProps) {
   const [tab, setTab] = useState<Tab>('instructions')
   const [readme, setReadme] = useState<string | null>(null)
   const [files, setFiles] = useState<SkillFile[] | null>(null)
@@ -178,17 +179,26 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
       </div>
 
       <aside className="w-[280px] shrink-0 overflow-y-auto border-l border-[#1c1c20] bg-[#0b0b0d] px-5 py-5">
-        <div className="mb-4 flex items-center justify-between rounded-[11px] border border-[#232328] bg-[#101013] px-3.5 py-3">
-          <div>
-            <div className="text-[12px] text-[#71717a]">Status</div>
-            <div
-              className="mt-0.5 text-[14px] font-semibold"
-              style={{ color: skill.enabled ? '#22c55e' : '#a1a1aa' }}
-            >
-              {skill.enabled ? 'Enabled' : 'Disabled'}
+        <div className="mb-4 rounded-[11px] border border-[#232328] bg-[#101013] px-3.5 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[12px] text-[#71717a]">Status</div>
+              <div
+                className="mt-0.5 text-[14px] font-semibold"
+                style={{ color: skill.enabled ? '#22c55e' : '#a1a1aa' }}
+              >
+                {skill.enabled ? 'Enabled' : 'Disabled'}
+              </div>
             </div>
+            <SkillToggle enabled={skill.enabled} size="lg" onToggle={onToggle} disabled={!manageable} />
           </div>
-          <SkillToggle enabled={skill.enabled} size="lg" onToggle={onToggle} disabled={!manageable} />
+          {(skill.library?.targets.length ?? 0) > 0 && (
+            <div className="mt-2 border-t border-[#1c1c20] pt-2 text-[11px] leading-relaxed text-[#52525b]">
+              Applies here and on all {skill.library?.targets.length} syndicated{' '}
+              {skill.library?.targets.length === 1 ? 'machine' : 'machines'}. Use the per-machine toggles
+              below for one machine only.
+            </div>
+          )}
         </div>
 
         <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#52525b]">Details</div>
@@ -232,7 +242,12 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
         )}
 
         {skill.library && machines.length > 0 && (
-          <SyndicationPanel skill={skill} machines={machines} onSetSyndication={onSetSyndication} />
+          <SyndicationPanel
+            skill={skill}
+            machines={machines}
+            onSetSyndication={onSetSyndication}
+            onSetSkillEnabled={onSetSkillEnabled}
+          />
         )}
 
         <button
@@ -272,28 +287,33 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
 }
 
 /**
- * Per-machine syndication for a library skill: checking a machine installs
- * the library's pinned version there; unchecking uninstalls from just that
- * machine (global scope — project placement happens via the install dialog).
+ * Per-machine syndication for a library skill. The checkbox controls
+ * presence: checking installs the library's pinned version, unchecking
+ * uninstalls from just that machine. The mini toggle controls enabled state
+ * on that machine alone (global scope — project placement happens via the
+ * install dialog).
  */
 function SyndicationPanel({
   skill,
   machines,
   onSetSyndication,
+  onSetSkillEnabled,
 }: {
   skill: Skill
   machines: MachineSnapshot[]
   onSetSyndication: (input: SetSyndicationInput) => Promise<void>
+  onSetSkillEnabled: (input: SetSkillEnabledInput) => Promise<void>
 }) {
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const targets = skill.library?.targets ?? []
+  const dirName = skill.realPath.split('/').filter(Boolean).pop() ?? ''
 
-  const toggle = async (machineName: string, enabled: boolean) => {
+  const run = async (machineName: string, op: () => Promise<void>) => {
     setPending(machineName)
     setError(null)
     try {
-      await onSetSyndication({ skillId: skill.id, machine: machineName, enabled, scope: 'global' })
+      await op()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -310,25 +330,54 @@ function SyndicationPanel({
         {machines.map((entry) => {
           const name = entry.machine.name
           const syndicated = targets.some((target) => target.machine === name && target.scope === 'global')
+          // That machine's copy, for its enabled state (matched by folder name).
+          const remoteCopy = entry.snapshot?.skills.find(
+            (remote) =>
+              remote.sourceKind === 'Personal' &&
+              (remote.realPath.split('/').filter(Boolean).pop() ?? '') === dirName,
+          )
           const busy = pending !== null
           return (
-            <label
+            <div
               key={name}
               className={`flex items-center gap-2.5 rounded-[9px] border border-[#1c1c20] bg-[#0c0c0e] px-3 py-2 ${
-                busy ? 'opacity-70' : 'cursor-pointer hover:border-[#2e2e34]'
+                busy ? 'opacity-70' : 'hover:border-[#2e2e34]'
               }`}
             >
               <input
                 type="checkbox"
                 checked={syndicated}
                 disabled={busy}
-                onChange={() => void toggle(name, !syndicated)}
-                className="size-3.5 accent-[#f97316]"
+                onChange={() =>
+                  void run(name, () =>
+                    onSetSyndication({ skillId: skill.id, machine: name, enabled: !syndicated, scope: 'global' }),
+                  )
+                }
+                className="size-3.5 shrink-0 cursor-pointer accent-[#f97316]"
               />
               <Server className="size-3.5 shrink-0 text-[#52525b]" />
               <span className="flex-1 truncate text-[12.5px] text-[#e4e4e7]">{name}</span>
-              {pending === name && <Loader2 className="size-3.5 animate-spin text-[#71717a]" />}
-            </label>
+              {pending === name ? (
+                <Loader2 className="size-3.5 animate-spin text-[#71717a]" />
+              ) : (
+                syndicated &&
+                remoteCopy && (
+                  <SkillToggle
+                    enabled={remoteCopy.enabled}
+                    disabled={busy}
+                    onToggle={() =>
+                      void run(name, () =>
+                        onSetSkillEnabled({
+                          skillId: skill.id,
+                          enabled: !remoteCopy.enabled,
+                          target: { machine: name, scope: 'global' },
+                        }),
+                      )
+                    }
+                  />
+                )
+              )}
+            </div>
           )
         })}
       </div>

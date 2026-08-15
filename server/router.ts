@@ -55,6 +55,10 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     }],
     ['GET /api/machines', async () => workspace.listMachineSnapshots()],
     ['POST /api/add-machine', async (_q, body) => workspace.addMachine(body.machine as never)],
+    ['POST /api/update-machine', async (_q, body) => {
+      if (typeof body.name !== 'string') throw new Error('Missing machine name.')
+      return workspace.updateMachine(body.name, body.machine as never)
+    }],
     ['POST /api/remove-machine', async (_q, body) => {
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
       return workspace.removeMachine(body.name)
@@ -68,6 +72,7 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
       return workspace.installOnMachine(body.name, body.input as never)
     }],
     ['POST /api/set-syndication', async (_q, body) => workspace.setSyndication(body.input as never)],
+    ['POST /api/set-skill-enabled', async (_q, body) => workspace.setSkillEnabled(body.input as never)],
     ['POST /api/machine-skill-op', async (_q, body) => {
       const { name, op } = body
       if (typeof name !== 'string') throw new Error('Missing machine name.')

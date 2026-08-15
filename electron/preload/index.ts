@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { SetSyndicationInput, SyndicationResult } from '../main/workspace/skill-workspace'
+import type {
+  SetSkillEnabledInput,
+  SetSkillEnabledResult,
+  SetSyndicationInput,
+  SyndicationResult,
+} from '../main/workspace/skill-workspace'
 import type {
   CreateSkillInput,
   InstallRepoSkillInput,
@@ -42,6 +47,8 @@ contextBridge.exposeInMainWorld('skilldex', {
     listMachineSnapshots: (): Promise<MachineSnapshot[]> => ipcRenderer.invoke('skilldex:list-machines'),
     addMachine: (machine: MachineRecord): Promise<MachineSnapshot[]> =>
       ipcRenderer.invoke('skilldex:add-machine', machine),
+    updateMachine: (name: string, machine: MachineRecord): Promise<MachineSnapshot[]> =>
+      ipcRenderer.invoke('skilldex:update-machine', name, machine),
     removeMachine: (name: string): Promise<MachineSnapshot[]> =>
       ipcRenderer.invoke('skilldex:remove-machine', name),
     refreshMachine: (name: string): Promise<MachineSnapshot> =>
@@ -52,5 +59,7 @@ contextBridge.exposeInMainWorld('skilldex', {
       ipcRenderer.invoke('skilldex:machine-skill-op', name, op, id),
     setSyndication: (input: SetSyndicationInput): Promise<SyndicationResult> =>
       ipcRenderer.invoke('skilldex:set-syndication', input),
+    setSkillEnabled: (input: SetSkillEnabledInput): Promise<SetSkillEnabledResult> =>
+      ipcRenderer.invoke('skilldex:set-skill-enabled', input),
   },
 })

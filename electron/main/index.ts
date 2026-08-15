@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createConfigStore } from './workspace/config'
 import { createLibraryStore } from './workspace/library-store'
-import { createSkillWorkspace, type SetSyndicationInput } from './workspace/skill-workspace'
+import { createSkillWorkspace, type SetSkillEnabledInput, type SetSyndicationInput } from './workspace/skill-workspace'
 import type {
   CreateSkillInput,
   InstallRepoSkillInput,
@@ -93,6 +93,9 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('skilldex:list-machines', () => workspace.listMachineSnapshots())
   ipcMain.handle('skilldex:add-machine', (_event, machine: MachineRecord) => workspace.addMachine(machine))
+  ipcMain.handle('skilldex:update-machine', (_event, name: string, machine: MachineRecord) =>
+    workspace.updateMachine(name, machine),
+  )
   ipcMain.handle('skilldex:remove-machine', (_event, name: string) => workspace.removeMachine(name))
   ipcMain.handle('skilldex:refresh-machine', (_event, name: string) => workspace.refreshMachine(name))
   ipcMain.handle('skilldex:machine-install', (_event, name: string, input: InstallRepoSkillInput) =>
@@ -105,6 +108,9 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('skilldex:set-syndication', (_event, input: SetSyndicationInput) =>
     workspace.setSyndication(input),
+  )
+  ipcMain.handle('skilldex:set-skill-enabled', (_event, input: SetSkillEnabledInput) =>
+    workspace.setSkillEnabled(input),
   )
 
   createMainWindow()

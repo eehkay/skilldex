@@ -55,7 +55,7 @@ function fakeRemote() {
     const ok = (stdout: string): ExecResult => ({ stdout, stderr: '', code: 0 })
     if (remote.includes('sha256sum')) return ok('missing')
     if (remote.includes('cat >')) return ok('')
-    const match = /agent\.js (\w+)/.exec(remote)
+    const match = /agent\.js ([\w-]+)/.exec(remote)
     if (match) {
       calls.push({ command: match[1], input: input ? JSON.parse(input) : undefined })
       if (match[1] === 'ping') return ok(JSON.stringify({ ok: true }))
@@ -149,5 +149,77 @@ describe('library and syndication', () => {
 
     const ledger = JSON.parse(await fs.readFile(path.join(tmp, 'library.json'), 'utf8'))
     expect(ledger.skills.tdd).toBeUndefined()
+  })
+
+  describe('setSkillEnabled', () => {
+    it("target 'everywhere' disables the local copy and every syndicated machine", async () => {
+      await ws.installOnMachine('tower', { repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+      const skill = (await ws.getSnapshot()).skills.find((entry) => entry.name === 'tdd')!
+
+      const result = await ws.setSkillEnabled({ skillId: skill.id, enabled: false, target: 'everywhere' })
+      const call = remote.calls.find((entry) => entry.command === 'set-enabled')
+      expect(call?.input).toMatchObject({ dirName: 'tdd', scope: 'global', enabled: false })
+      expect(result.machines.map((entry) => entry.machine.name)).toEqual(['tower'])
+      // Local copy parked under .disabled.
+      await expect(
+        fs.access(path.join(tmp, '.claude', 'skills', '.disabled', 'tdd', 'SKILL.md')),
+      ).resolves.toBeUndefined()
+      expect(result.workspace.skills.find((entry) => entry.name === 'tdd')?.enabled).toBe(false)
+    })
+
+    it('a single-machine target never touches the local copy', async () => {
+      await ws.installOnMachine('tower', { repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+      const skill = (await ws.getSnapshot()).skills.find((entry) => entry.name === 'tdd')!
+
+      const result = await ws.setSkillEnabled({
+        skillId: skill.id,
+        enabled: false,
+        target: { machine: 'tower', scope: 'global' },
+      })
+      expect(remote.calls.some((entry) => entry.command === 'set-enabled')).toBe(true)
+      // Local copy stays active.
+      await expect(fs.access(path.join(tmp, '.claude', 'skills', 'tdd', 'SKILL.md'))).resolves.toBeUndefined()
+      expect(result.workspace.skills.find((entry) => entry.name === 'tdd')?.enabled).toBe(true)
+    })
+  })
+
+  describe('updateMachine', () => {
+    it('renames without pinging and carries syndication targets along', async () => {
+      await ws.installOnMachine('tower', { repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+      const pingsBefore = remote.calls.filter((call) => call.command === 'ping').length
+
+      const snapshots = await ws.updateMachine('tower', { name: 'arch-tower', host: 'arch-tower', user: 'kellogg' })
+      expect(snapshots.map((entry) => entry.machine.name)).toEqual(['arch-tower'])
+      expect(remote.calls.filter((call) => call.command === 'ping').length).toBe(pingsBefore)
+
+      const config = await ws.getConfig()
+      expect(config.machines).toEqual([{ name: 'arch-tower', host: 'arch-tower', user: 'kellogg' }])
+
+      const snapshot = await ws.getSnapshot()
+      expect(snapshot.skills.find((entry) => entry.name === 'tdd')?.library?.targets).toEqual([
+        { machine: 'arch-tower', scope: 'global', projectName: undefined },
+      ])
+      // The old name no longer resolves; the new one does.
+      await expect(ws.refreshMachine('tower')).rejects.toThrow('Unknown machine')
+      await expect(ws.refreshMachine('arch-tower')).resolves.toMatchObject({ machine: { name: 'arch-tower' } })
+    })
+
+    it('pings the new login target when host or user changes', async () => {
+      const pingsBefore = remote.calls.filter((call) => call.command === 'ping').length
+      await ws.updateMachine('tower', { name: 'tower', host: 'tower.tail', user: 'kellogg' })
+      expect(remote.calls.filter((call) => call.command === 'ping').length).toBe(pingsBefore + 1)
+      expect((await ws.getConfig()).machines[0]).toEqual({ name: 'tower', host: 'tower.tail', user: 'kellogg' })
+    })
+
+    it('rejects unknown machines, empty fields, and name collisions', async () => {
+      await ws.addMachine({ name: 'mini', host: 'mini.tail', user: 'kellogg' })
+      await expect(ws.updateMachine('nope', { name: 'x', host: 'y', user: 'z' })).rejects.toThrow('Unknown machine')
+      await expect(ws.updateMachine('tower', { name: '  ', host: 'y', user: 'z' })).rejects.toThrow('required')
+      await expect(ws.updateMachine('tower', { name: 'mini', host: 'arch-tower', user: 'kellogg' })).rejects.toThrow(
+        'already exists',
+      )
+      // Saving under its own name is not a collision.
+      await expect(ws.updateMachine('tower', { name: 'tower', host: 'arch-tower', user: 'kellogg' })).resolves.toHaveLength(2)
+    })
   })
 })

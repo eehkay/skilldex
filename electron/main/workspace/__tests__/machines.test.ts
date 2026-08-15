@@ -69,6 +69,21 @@ describe('machine manager', () => {
     expect(remote.state.pushes).toBe(1) // confirmed in-process, no re-hash
   })
 
+  it('re-probes when the same name points at a new host', async () => {
+    const remote = fakeMachine()
+    const manager = createMachineManager({ agentPath, execImpl: remote.exec })
+    await manager.ping(MACHINE)
+    const probes = () => remote.state.commands.filter((command) => command.includes('sha256sum')).length
+    expect(probes()).toBe(1)
+
+    // A rename alone reuses the confirmation…
+    await manager.ping({ ...MACHINE, name: 'renamed' })
+    expect(probes()).toBe(1)
+    // …but a new host must be checked (the agent may not be there yet).
+    await manager.ping({ ...MACHINE, host: 'other-host' })
+    expect(probes()).toBe(2)
+  })
+
   it('re-pushes when the bundled agent changes', async () => {
     const remote = fakeMachine()
     const manager = createMachineManager({ agentPath, execImpl: remote.exec })

@@ -27,7 +27,7 @@ import {
   fetchRepoCatalog,
   type FetchLike,
 } from '../electron/main/workspace/repo-catalog'
-import { removeSkillDir, slugify } from '../electron/main/workspace/skill-manager'
+import { disableSkillDir, enableSkillDir, removeSkillDir, slugify } from '../electron/main/workspace/skill-manager'
 import { createSkillWorkspace, writeSkillLockEntry } from '../electron/main/workspace/skill-workspace'
 
 /** The desktop app's config path on this machine (Electron's userData layout). */
@@ -140,6 +140,39 @@ async function main(): Promise<void> {
         }
       }
       if (!removed) throw new Error(`Skill not found on this machine: ${input.dirName}`)
+      emit(await workspace.getSnapshot())
+      return
+    }
+    case 'set-enabled': {
+      const input = JSON.parse(await readStdin()) as {
+        dirName: string
+        scope: 'global' | 'project'
+        projectName?: string
+        enabled: boolean
+      }
+      if (path.basename(input.dirName) !== input.dirName || input.dirName.startsWith('.'))
+        throw new Error(`Invalid skill folder name: ${input.dirName}`)
+
+      let root: string
+      if (input.scope === 'project') {
+        const config = await configStore.load()
+        const dirs = await resolveProjectDirs(config.projectRoots)
+        const match = dirs.find((dir) => path.basename(dir) === input.projectName)
+        if (!match) throw new Error(`Unknown project on this machine: ${input.projectName ?? '(none)'}`)
+        root = path.join(match, '.claude', 'skills')
+      } else {
+        root = path.join(homeDir, '.claude', 'skills')
+      }
+
+      const active = path.join(root, input.dirName)
+      const parked = path.join(root, '.disabled', input.dirName)
+      const isActive = await fs.access(active).then(() => true).catch(() => false)
+      const isParked = await fs.access(parked).then(() => true).catch(() => false)
+      if (!isActive && !isParked) throw new Error(`Skill not found on this machine: ${input.dirName}`)
+
+      // Already in the requested state → no-op, so the call is idempotent.
+      if (input.enabled && isParked) await enableSkillDir(parked)
+      if (!input.enabled && isActive) await disableSkillDir(active)
       emit(await workspace.getSnapshot())
       return
     }

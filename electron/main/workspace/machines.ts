@@ -53,6 +53,8 @@ export type MachineUninstallInput = {
   projectName?: string
 }
 
+export type MachineSetEnabledInput = MachineUninstallInput & { enabled: boolean }
+
 const AGENT_REMOTE = '~/.skilldex-agent.js'
 const HASH_TIMEOUT = 15_000
 const PUSH_TIMEOUT = 30_000
@@ -65,6 +67,8 @@ export type MachineManager = {
   snapshot(machine: MachineRecord): Promise<MachineSnapshot>
   install(machine: MachineRecord, input: MachineInstallInput): Promise<WorkspaceSnapshot>
   uninstall(machine: MachineRecord, input: MachineUninstallInput): Promise<WorkspaceSnapshot>
+  /** Enable/disable a skill by folder name (idempotent). */
+  setEnabled(machine: MachineRecord, input: MachineSetEnabledInput): Promise<WorkspaceSnapshot>
   skillOp(machine: MachineRecord, op: 'enable' | 'disable' | 'remove', id: string): Promise<WorkspaceSnapshot>
 }
 
@@ -73,8 +77,11 @@ export function createMachineManager({
   execImpl = spawnExec,
   knownHostsFile,
 }: MachineManagerDeps): MachineManager {
-  // Machines whose remote agent hash we've already confirmed this process.
+  // Hosts whose remote agent hash we've already confirmed this process.
+  // Keyed by login target, not display name: renaming a machine keeps the
+  // confirmation, while pointing a name at a new host forces a re-probe.
   const confirmed = new Map<string, string>()
+  const confirmKey = (machine: MachineRecord) => `${machine.user}@${machine.host}`
 
   function sshArgs(machine: MachineRecord, remoteCommand: string): string[] {
     const options = [
@@ -99,7 +106,7 @@ export function createMachineManager({
   async function ensureAgent(machine: MachineRecord): Promise<void> {
     const agent = await fs.readFile(agentPath, 'utf8')
     const localHash = createHash('sha256').update(agent).digest('hex')
-    if (confirmed.get(machine.name) === localHash) return
+    if (confirmed.get(confirmKey(machine)) === localHash) return
 
     const probe = await run(
       machine,
@@ -113,7 +120,7 @@ export function createMachineManager({
       const push = await run(machine, `cat > ${AGENT_REMOTE}`, { input: agent, timeoutMs: PUSH_TIMEOUT })
       if (push.code !== 0) throw new Error(describeSshFailure(machine, push))
     }
-    confirmed.set(machine.name, localHash)
+    confirmed.set(confirmKey(machine), localHash)
   }
 
   async function agentCall<T>(
@@ -166,6 +173,10 @@ export function createMachineManager({
 
     uninstall(machine, input) {
       return agentCall<WorkspaceSnapshot>(machine, 'uninstall', { input, timeoutMs: SNAPSHOT_TIMEOUT })
+    },
+
+    setEnabled(machine, input) {
+      return agentCall<WorkspaceSnapshot>(machine, 'set-enabled', { input, timeoutMs: SNAPSHOT_TIMEOUT })
     },
 
     skillOp(machine, op, id) {

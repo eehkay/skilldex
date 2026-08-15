@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, ListFilter, Loader2, Plus, RefreshCw } from 'lucide-react'
-import { AddMachineDialog } from '@/features/machines/ui/add-machine-dialog'
+import { MachineDialog } from '@/features/machines/ui/machine-dialog'
 import { MachineView } from '@/features/machines/ui/machine-view'
 import { Sidebar, type FilterKey, type SidebarCounts } from '@/features/navigation/ui/sidebar'
 import { AddRepoDialog } from '@/features/repos/ui/add-repo-dialog'
@@ -83,11 +83,13 @@ export function Dashboard() {
     machineSnapshots,
     machinesLoading,
     addMachine,
+    updateMachine,
     removeMachine,
     refreshMachine,
     installOnMachine,
     machineSkillOp,
     setSyndication,
+    setSkillEnabled,
   } = useWorkspace()
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
@@ -98,13 +100,19 @@ export function Dashboard() {
   const [showAddRepo, setShowAddRepo] = useState(false)
   const [installTarget, setInstallTarget] = useState<RepoSkill | null>(null)
   const [activeMachine, setActiveMachine] = useState<string | null>(null)
-  const [showAddMachine, setShowAddMachine] = useState(false)
+  // null = closed, 'add' = new machine, otherwise the name of the machine being edited.
+  const [machineDialog, setMachineDialog] = useState<'add' | string | null>(null)
 
   // Enabling/disabling moves a skill on disk, so its id changes. Re-select the
   // same skill (by name + kind) in the new snapshot so the detail view stays put.
+  // A syndicated library skill toggles everywhere at once; per-machine
+  // granularity lives in the detail view's Machines panel.
   const toggleSkill = async (skill: Skill) => {
     try {
-      const next = await (skill.enabled ? disable(skill.id) : enable(skill.id))
+      const syndicated = (skill.library?.targets.length ?? 0) > 0
+      const next = syndicated
+        ? await setSkillEnabled({ skillId: skill.id, enabled: !skill.enabled, target: 'everywhere' })
+        : await (skill.enabled ? disable(skill.id) : enable(skill.id))
       if (next && selectedId === skill.id) {
         const match = next.skills.find((s) => s.name === skill.name && s.sourceKind === skill.sourceKind)
         setSelectedId(match ? match.id : null)
@@ -203,7 +211,8 @@ export function Dashboard() {
         onSelectRepo={(slug) => { setActiveRepo(slug); setSelectedId(null); setActiveMachine(null) }}
         onAddRepo={() => setShowAddRepo(true)}
         onSelectMachine={(name) => { setActiveMachine(name); setSelectedId(null); setActiveRepo(null) }}
-        onAddMachine={() => setShowAddMachine(true)}
+        onAddMachine={() => setMachineDialog('add')}
+        onEditMachine={(name) => setMachineDialog(name)}
         onOpenSettings={() => setShowSettings(true)}
       />
 
@@ -213,6 +222,7 @@ export function Dashboard() {
             entry={activeMachineEntry}
             busy={machinesLoading}
             onRefresh={() => void refreshMachine(activeMachineEntry.machine.name).catch(() => {})}
+            onEdit={() => setMachineDialog(activeMachineEntry.machine.name)}
             onRemove={() => {
               setActiveMachine(null)
               void removeMachine(activeMachineEntry.machine.name).catch(() => {})
@@ -246,6 +256,9 @@ export function Dashboard() {
             onToggleFavourite={() => favourite(selected)}
             onRemove={() => void removeSkill(selected.id)}
             onSetSyndication={setSyndication}
+            onSetSkillEnabled={async (input) => {
+              await setSkillEnabled(input)
+            }}
             onBack={() => setSelectedId(null)}
           />
         ) : (
@@ -389,13 +402,20 @@ export function Dashboard() {
         }}
       />
 
-      <AddMachineDialog
-        open={showAddMachine}
-        onClose={() => setShowAddMachine(false)}
-        onAdd={async (machine) => {
-          await addMachine(machine)
-        }}
-      />
+      {machineDialog === 'add' ? (
+        <MachineDialog onClose={() => setMachineDialog(null)} onSubmit={addMachine} />
+      ) : machineDialog ? (
+        <MachineDialog
+          key={machineDialog}
+          initial={machineSnapshots.find((entry) => entry.machine.name === machineDialog)?.machine}
+          onClose={() => setMachineDialog(null)}
+          onSubmit={async (machine) => {
+            await updateMachine(machineDialog, machine)
+            // Keep the open pane pointed at the machine under its new name.
+            if (activeMachine === machineDialog) setActiveMachine(machine.name)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

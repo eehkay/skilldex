@@ -8,6 +8,7 @@ import {
   type MachineRecord,
   type MachineSnapshot,
   type RepoCatalog,
+  type SetSkillEnabledInput,
   type SetSyndicationInput,
   type Skill,
   type SkillFile,
@@ -41,11 +42,13 @@ export type WorkspaceState = {
   machineSnapshots: MachineSnapshot[]
   machinesLoading: boolean
   addMachine: (machine: MachineRecord) => Promise<void>
+  updateMachine: (name: string, machine: MachineRecord) => Promise<void>
   removeMachine: (name: string) => Promise<void>
   refreshMachine: (name: string) => Promise<void>
   installOnMachine: (name: string, input: InstallRepoSkillInput) => Promise<void>
   machineSkillOp: (name: string, op: 'enable' | 'disable' | 'remove', id: string) => Promise<void>
   setSyndication: (input: SetSyndicationInput) => Promise<void>
+  setSkillEnabled: (input: SetSkillEnabledInput) => Promise<WorkspaceSnapshot | null>
 }
 
 // Electron injects window.skilldex via preload; served by the hub instead,
@@ -201,6 +204,10 @@ export function useWorkspace(): WorkspaceState {
     (machine: MachineRecord) => mutateMachines(() => bridge()?.addMachine(machine)),
     [mutateMachines],
   )
+  const updateMachine = useCallback(
+    (name: string, machine: MachineRecord) => mutateMachines(() => bridge()?.updateMachine(name, machine)),
+    [mutateMachines],
+  )
   const removeMachine = useCallback(
     (name: string) => mutateMachines(() => bridge()?.removeMachine(name)),
     [mutateMachines],
@@ -219,6 +226,30 @@ export function useWorkspace(): WorkspaceState {
       patchMachine(() => bridge()?.machineSkillOp(name, op, id)),
     [patchMachine],
   )
+
+  const setSkillEnabled = useCallback(async (input: SetSkillEnabledInput) => {
+    setMachinesLoading(true)
+    try {
+      const result = await bridge()?.setSkillEnabled(input)
+      if (!result) return null
+      setSnapshot(result.workspace)
+      setError(null)
+      if (result.machines.length > 0)
+        setMachineSnapshots((current) =>
+          current.map(
+            (entry) =>
+              result.machines.find((touched) => touched.machine.name === entry.machine.name) ?? entry,
+          ),
+        )
+      return result.workspace
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      throw new Error(message)
+    } finally {
+      setMachinesLoading(false)
+    }
+  }, [])
 
   const setSyndication = useCallback(async (input: SetSyndicationInput) => {
     setMachinesLoading(true)
@@ -281,10 +312,12 @@ export function useWorkspace(): WorkspaceState {
     machineSnapshots,
     machinesLoading,
     addMachine,
+    updateMachine,
     removeMachine,
     refreshMachine,
     installOnMachine,
     machineSkillOp,
     setSyndication,
+    setSkillEnabled,
   }
 }
