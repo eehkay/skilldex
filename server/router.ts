@@ -11,6 +11,7 @@
 
 import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { logger, recentLogs } from '../electron/main/workspace/log'
 import type { SkillWorkspace } from '../electron/main/workspace/skill-workspace'
 
 type Handler = (query: URLSearchParams, body: Record<string, unknown>) => Promise<unknown>
@@ -23,6 +24,7 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
   }
 
   return new Map<string, Handler>([
+    ['GET /api/logs', async (q) => recentLogs(Number(q.get('limit')) || 200)],
     ['GET /api/config', async () => workspace.getConfig()],
     ['GET /api/snapshot', async () => workspace.getSnapshot()],
     ['POST /api/configure-sources', async (_q, body) => workspace.configureSources(body.config as never)],
@@ -123,11 +125,15 @@ export async function handleApi(
     }
   }
 
+  const started = Date.now()
   try {
     const result = await handler(url.searchParams, body)
     respond(response, 200, result ?? null)
+    if (url.pathname !== '/api/logs') logger.debug('http', { method: request.method, path: url.pathname, status: 200, ms: Date.now() - started })
   } catch (cause) {
-    respond(response, 400, { error: cause instanceof Error ? cause.message : String(cause) })
+    const message = cause instanceof Error ? cause.message : String(cause)
+    logger.warn('http.error', { method: request.method, path: url.pathname, status: 400, ms: Date.now() - started, error: message })
+    respond(response, 400, { error: message })
   }
   return true
 }

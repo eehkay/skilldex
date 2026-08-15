@@ -10,6 +10,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { syncAgentLinks } from './agent-links'
+import { logger } from './log'
 import { categorizeSkills, createClassifierFromConfig, type ClassifierClient } from './categorizer'
 import type { ConfigStore } from './config'
 import { createMemoryLibraryStore, type LibraryStore } from './library-store'
@@ -812,12 +813,19 @@ export function createSkillWorkspace({
       }
       const remotePersonal = remote.snapshot.skills.filter((skill) => skill.sourceKind === 'Personal')
       const remoteNames = new Set(remotePersonal.map(dirNameOf))
-      return {
+      const diff = {
         machine,
         onlyOnMachine: remotePersonal.filter((skill) => !libraryNames.has(dirNameOf(skill))),
         onlyInLibrary: [...libraryNames.values()].filter((skill) => !remoteNames.has(dirNameOf(skill))),
         inSync: remotePersonal.filter((skill) => libraryNames.has(dirNameOf(skill))).length,
       }
+      logger.info('sync.diff', {
+        machine: name, library: libraryNames.size, machinePersonal: remotePersonal.length,
+        machineTotal: remote.snapshot.skills.length, inSync: diff.inSync,
+        onlyOnMachine: diff.onlyOnMachine.length, onlyInLibrary: diff.onlyInLibrary.length,
+        onlyOnMachineNames: diff.onlyOnMachine.map(dirNameOf).slice(0, 50),
+      })
+      return diff
     },
 
     async adoptFromMachine(name, skillIds) {
@@ -828,6 +836,7 @@ export function createSkillWorkspace({
       const adopted: string[] = []
       const failed: Record<string, string> = {}
 
+      logger.info('sync.adopt.start', { machine: name, requested: skillIds.length })
       for (const id of skillIds) {
         let label = id
         try {
@@ -838,6 +847,10 @@ export function createSkillWorkspace({
           const dest = path.join(root, dirName)
           const exists = await fs.access(dest).then(() => true).catch(() => false)
           const target: SyndicationTarget = { machine: name, scope: 'global' }
+          logger.debug('sync.adopt.skill', {
+            machine: name, skill: dirName, files: files.length, symlink: skill.isSymlink,
+            realPath: skill.realPath, origin: skill.origin?.label, existsInLibrary: exists,
+          })
 
           if (exists) {
             // Already in the library — just record that this machine has it.
@@ -849,6 +862,7 @@ export function createSkillWorkspace({
               targets: withTarget(existing?.targets ?? [], target),
               adoptedFrom: existing?.adoptedFrom,
             })
+            logger.info('sync.adopt.linked', { machine: name, skill: dirName, reason: 'already in library' })
             adopted.push(dirName)
             continue
           }
@@ -878,9 +892,11 @@ export function createSkillWorkspace({
                 targets: [target],
                 adoptedFrom: name,
               })
+              logger.info('sync.adopt.reimported', { machine: name, skill: dirName, repo: originRepo, ref: pinnedRef })
               adopted.push(dirName)
               continue
             }
+            logger.debug('sync.adopt.originNoMatch', { machine: name, skill: dirName, repo: originRepo })
           }
 
           await fs.mkdir(dest, { recursive: true })
@@ -901,12 +917,16 @@ export function createSkillWorkspace({
             targets: [target],
             adoptedFrom: name,
           })
+          logger.info('sync.adopt.copied', { machine: name, skill: dirName, files: files.length })
           adopted.push(dirName)
         } catch (cause) {
-          failed[label] = cause instanceof Error ? cause.message : String(cause)
+          const message = cause instanceof Error ? cause.message : String(cause)
+          failed[label] = message
+          logger.warn('sync.adopt.failed', { machine: name, skill: label, error: message })
         }
       }
 
+      logger.info('sync.adopt.done', { machine: name, adopted: adopted.length, failed: Object.keys(failed).length })
       return { workspace: await buildSnapshot(config), adopted, failed }
     },
 
@@ -953,11 +973,15 @@ export function createSkillWorkspace({
             targets: withTarget(meta?.targets ?? [], target),
             adoptedFrom: meta?.adoptedFrom,
           })
+          logger.info('sync.converge.installed', { machine: name, skill: dirName, via: meta?.repo && meta.ref ? 'repo' : 'files' })
           installed.push(dirName)
         } catch (cause) {
-          failed[dirName] = cause instanceof Error ? cause.message : String(cause)
+          const message = cause instanceof Error ? cause.message : String(cause)
+          failed[dirName] = message
+          logger.warn('sync.converge.failed', { machine: name, skill: dirName, error: message })
         }
       }
+      logger.info('sync.converge.done', { machine: name, installed: installed.length, failed: Object.keys(failed).length })
 
       const machineState: MachineSnapshot = snapshot
         ? { machine, snapshot }

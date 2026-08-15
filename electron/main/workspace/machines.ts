@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
+import { logger } from './log'
 import type { MachineRecord, MachineSnapshot, WorkspaceSnapshot } from './types'
 
 export type ExecResult = { stdout: string; stderr: string; code: number }
@@ -130,9 +131,31 @@ export function createMachineManager({
     remoteCommand: string,
     opts: { input?: string; timeoutMs: number },
   ): Promise<ExecResult> {
-    // Managing the host we run on: same commands, local bash, no SSH.
-    if (isSelf(machine)) return execImpl('bash', ['-c', remoteCommand], opts)
-    return execImpl('ssh', sshArgs(machine, remoteCommand), opts)
+    const started = Date.now()
+    const local = isSelf(machine)
+    // Summarize the command for logs without dumping agent payloads/stdin.
+    const summary = remoteCommand.replace(/\s+/g, ' ').slice(0, 120)
+    let result: ExecResult
+    try {
+      // Managing the host we run on: same commands, local bash, no SSH.
+      result = local
+        ? await execImpl('bash', ['-c', remoteCommand], opts)
+        : await execImpl('ssh', sshArgs(machine, remoteCommand), opts)
+    } catch (cause) {
+      logger.error('machine.exec.error', {
+        machine: machine.name, target: `${machine.user}@${machine.host}`, transport: local ? 'local' : 'ssh',
+        command: summary, ms: Date.now() - started, error: cause instanceof Error ? cause.message : String(cause),
+      })
+      throw cause
+    }
+    const fields = {
+      machine: machine.name, target: `${machine.user}@${machine.host}`, transport: local ? 'local' : 'ssh',
+      command: summary, code: result.code, ms: Date.now() - started,
+      stdoutBytes: result.stdout.length, inputBytes: opts.input?.length ?? 0,
+    }
+    if (result.code === 0) logger.debug('machine.exec', fields)
+    else logger.warn('machine.exec.nonzero', { ...fields, stderr: result.stderr.trim().split('\n').slice(-3).join(' | ').slice(0, 300) })
+    return result
   }
 
   async function ensureAgent(machine: MachineRecord): Promise<void> {
@@ -149,8 +172,11 @@ export function createMachineManager({
 
     const remoteHash = probe.stdout.trim().split(/\s+/)[0]
     if (remoteHash !== localHash) {
+      logger.info('machine.agent.push', { machine: machine.name, reason: remoteHash === 'missing' ? 'missing' : 'stale', bytes: agent.length })
       const push = await run(machine, `cat > ${AGENT_REMOTE}`, { input: agent, timeoutMs: PUSH_TIMEOUT })
       if (push.code !== 0) throw new Error(describeSshFailure(machine, push))
+    } else {
+      logger.debug('machine.agent.current', { machine: machine.name })
     }
     confirmed.set(confirmKey(machine), localHash)
   }
@@ -177,9 +203,18 @@ export function createMachineManager({
       payload && typeof payload === 'object' && 'error' in payload
         ? String((payload as { error: unknown }).error)
         : null
-    if (result.code !== 0) throw new Error(errorMessage ?? describeSshFailure(machine, result))
-    if (errorMessage) throw new Error(errorMessage)
-    if (payload === null) throw new Error(`${machine.name}: agent returned unparseable output.`)
+    if (result.code !== 0) {
+      logger.warn('machine.agent.fail', { machine: machine.name, command, code: result.code, error: errorMessage ?? undefined })
+      throw new Error(errorMessage ?? describeSshFailure(machine, result))
+    }
+    if (errorMessage) {
+      logger.warn('machine.agent.error', { machine: machine.name, command, error: errorMessage })
+      throw new Error(errorMessage)
+    }
+    if (payload === null) {
+      logger.error('machine.agent.unparseable', { machine: machine.name, command, stdoutHead: result.stdout.slice(0, 200) })
+      throw new Error(`${machine.name}: agent returned unparseable output.`)
+    }
     return payload as T
   }
 
@@ -193,8 +228,16 @@ export function createMachineManager({
         const snapshot = await agentCall<WorkspaceSnapshot>(machine, 'snapshot', {
           timeoutMs: SNAPSHOT_TIMEOUT,
         })
+        const personal = snapshot.skills.filter((skill) => skill.sourceKind === 'Personal').length
+        logger.info('machine.snapshot', {
+          machine: machine.name, skills: snapshot.skills.length, personal,
+          projects: snapshot.projects.length, scanErrors: snapshot.errors.length,
+          symlinked: snapshot.skills.filter((skill) => skill.isSymlink).length,
+        })
+        if (snapshot.errors.length) logger.warn('machine.snapshot.scanErrors', { machine: machine.name, errors: snapshot.errors.slice(0, 5) })
         return { machine, snapshot }
       } catch (cause) {
+        logger.warn('machine.snapshot.unreachable', { machine: machine.name, error: cause instanceof Error ? cause.message : String(cause) })
         return { machine, snapshot: null, error: cause instanceof Error ? cause.message : String(cause) }
       }
     },

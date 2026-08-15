@@ -22,6 +22,7 @@ import path from 'node:path'
 import { createConfigStore } from '../electron/main/workspace/config'
 import { createLibraryStore } from '../electron/main/workspace/library-store'
 import { createSkillWorkspace } from '../electron/main/workspace/skill-workspace'
+import { logger } from '../electron/main/workspace/log'
 import { createApiRoutes, handleApi } from './router'
 import { serveStatic } from './static'
 
@@ -58,9 +59,7 @@ async function main(): Promise<void> {
   })
 
   server.listen(port, host, () => {
-    console.log(`skilldex hub listening on http://${host}:${port}`)
-    console.log(`data dir: ${dataDir}`)
-    console.log(`static root: ${staticRoot}`)
+    logger.info('hub.listening', { url: `http://${host}:${port}`, dataDir, staticRoot, logLevel: process.env.SKILLDEX_LOG || 'info' })
   })
 }
 
