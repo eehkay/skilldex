@@ -1,7 +1,17 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, FileText, RefreshCw, Trash2 } from 'lucide-react'
-import { iconColorsFor, monoFor, toSkill, type MachineSnapshot, type Skill } from '@/features/skills/model/skills'
+import { iconColorsFor, monoFor, scopePillClass, toSkill, type MachineSnapshot, type Skill } from '@/features/skills/model/skills'
 import { SkillToggle } from '@/features/skills/ui/skill-toggle'
+
+type MachineFilter = 'all' | 'global' | 'plugin' | 'project' | 'disabled'
+
+const FILTERS: Array<{ key: MachineFilter; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'global', label: 'Global' },
+  { key: 'plugin', label: 'Plugins' },
+  { key: 'project', label: 'Projects' },
+  { key: 'disabled', label: 'Disabled' },
+]
 
 type MachineViewProps = {
   entry: MachineSnapshot
@@ -18,18 +28,38 @@ type MachineViewProps = {
  */
 export function MachineView({ entry, busy, onRefresh, onRemove, onSkillOp }: MachineViewProps) {
   const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<MachineFilter>('all')
   const skills = useMemo(
     () => (entry.snapshot ? entry.snapshot.skills.map(toSkill) : []),
     [entry.snapshot],
   )
 
+  // Mirrors the local library's tabs: source tabs show the active set, the
+  // Disabled tab is the only place switched-off skills appear.
+  const counts: Record<MachineFilter, number> = useMemo(() => {
+    const active = skills.filter((skill) => skill.enabled)
+    return {
+      all: active.length,
+      global: active.filter((skill) => skill.scope === 'global').length,
+      plugin: active.filter((skill) => skill.scope === 'plugin').length,
+      project: active.filter((skill) => skill.scope === 'project').length,
+      disabled: skills.filter((skill) => !skill.enabled).length,
+    }
+  }, [skills])
+
   const visible = useMemo(() => {
+    const scoped =
+      filter === 'disabled'
+        ? skills.filter((skill) => !skill.enabled)
+        : filter === 'all'
+          ? skills.filter((skill) => skill.enabled)
+          : skills.filter((skill) => skill.enabled && skill.scope === filter)
     const value = query.trim().toLowerCase()
-    if (!value) return skills
-    return skills.filter((skill) =>
-      [skill.name, skill.summary, skill.source].join(' ').toLowerCase().includes(value),
+    if (!value) return scoped
+    return scoped.filter((skill) =>
+      [skill.name, skill.summary, skill.source, ...skill.projects].join(' ').toLowerCase().includes(value),
     )
-  }, [skills, query])
+  }, [skills, filter, query])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -67,17 +97,29 @@ export function MachineView({ entry, busy, onRefresh, onRemove, onSkillOp }: Mac
         </div>
 
         {entry.snapshot && (
-          <div className="mt-5 flex items-center gap-3 border-b border-[#1c1c20] pb-3">
+          <div className="mt-5 flex items-center gap-2 border-b border-[#1c1c20]">
+            {FILTERS.map((item) => {
+              const active = filter === item.key
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setFilter(item.key)}
+                  className={`-mb-px border-b-2 px-1 pb-2.5 text-[13px] transition ${
+                    active ? 'border-[#f97316] font-semibold text-[#fafafa]' : 'border-transparent font-medium text-[#71717a]'
+                  }`}
+                >
+                  {item.label} <span className="font-mono text-[11px] opacity-60">{counts[item.key]}</span>
+                </button>
+              )
+            })}
+            <div className="flex-1" />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Filter skills…"
-              className="h-[32px] w-[260px] rounded-[9px] border border-[#27272a] bg-[#111114] px-3 text-[13px] text-[#e4e4e7] outline-none placeholder:text-[#52525b] focus:border-[#3a3a42]"
+              className="mb-2 h-[30px] w-[220px] rounded-[9px] border border-[#27272a] bg-[#111114] px-3 text-[13px] text-[#e4e4e7] outline-none placeholder:text-[#52525b] focus:border-[#3a3a42]"
             />
-            <span className="text-[12px] text-[#52525b]">
-              {skills.length} {skills.length === 1 ? 'skill' : 'skills'} · {entry.snapshot.projects.length}{' '}
-              {entry.snapshot.projects.length === 1 ? 'project' : 'projects'}
-            </span>
           </div>
         )}
       </div>
@@ -128,7 +170,14 @@ function MachineSkillCard({
           {monoFor(skill.name)}
         </div>
         <div className="min-w-0 flex-1">
-          <span className="block truncate text-[14.5px] font-semibold text-[#fafafa]">{skill.name}</span>
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[14.5px] font-semibold text-[#fafafa]">{skill.name}</span>
+            <span
+              className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${scopePillClass(skill.scope)}`}
+            >
+              {skill.scope}
+            </span>
+          </div>
           <span className="mt-0.5 block truncate font-mono text-[11px] text-[#52525b]">{skill.source}</span>
         </div>
         <span className="mt-0.5 flex shrink-0 items-center gap-1.5">
