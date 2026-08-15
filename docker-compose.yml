@@ -10,7 +10,7 @@
 services:
   tailscale:
     image: tailscale/tailscale:latest
-    hostname: skilldex-hub
+    hostname: skillsync
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
