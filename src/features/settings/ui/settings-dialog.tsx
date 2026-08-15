@@ -130,6 +130,31 @@ export function SettingsDialog({ open, config, homeDir, onClose, onConfigure, on
             </div>
           </section>
 
+          <section className="mt-7">
+            <div className="text-[13px] font-semibold text-[#e4e4e7]">Agents</div>
+            <div className="mt-0.5 text-[12px] text-[#71717a]">
+              Your skills stay in .claude/skills; other agents get symlinks kept in sync automatically.
+              OpenCode reads the Claude paths natively — nothing to enable.
+            </div>
+            <div className="mt-3 flex flex-col gap-2">
+              <ToggleRow
+                label="Codex CLI"
+                detail="~/.codex/skills and <project>/.codex/skills"
+                enabled={config?.agents.includes('codex') ?? false}
+                disabled={busy || !config}
+                onToggle={() =>
+                  config &&
+                  apply({
+                    ...config,
+                    agents: config.agents.includes('codex')
+                      ? config.agents.filter((agent) => agent !== 'codex')
+                      : [...config.agents, 'codex'],
+                  })
+                }
+              />
+            </div>
+          </section>
+
           {error && <p className="mt-4 text-[12.5px] text-[#f87171]">{error}</p>}
         </div>
 

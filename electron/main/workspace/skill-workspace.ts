@@ -9,6 +9,7 @@
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { syncAgentLinks } from './agent-links'
 import type { ConfigStore } from './config'
 import { favouriteKeyFor } from './favourite-key'
 import {
@@ -199,6 +200,16 @@ export function createSkillWorkspace({
     const sources: SourceRecord[] = []
     const errors: string[] = []
     const collected: SkillRecord[] = []
+
+    // Reconcile other agents' skill directories (e.g. codex symlinks) before
+    // scanning. Every read and mutation funnels through here, so links
+    // self-heal after any change — including the toggle being switched off.
+    errors.push(
+      ...(await syncAgentLinks(
+        [homeDir, ...(await resolveProjectDirs(config.projectRoots).catch(() => []))],
+        config.agents,
+      )),
+    )
 
     if (config.includePersonal) {
       const result = await scanPersonalSkills(homeDir)

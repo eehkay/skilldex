@@ -103,7 +103,15 @@ export type WorkspaceConfig = {
   skillRepos: string[]
   /** Remote machines managed over SSH (hub mode). */
   machines: MachineRecord[]
+  /**
+   * Coding agents whose skill directories Skilldex maintains. 'claude' is
+   * always present (its dirs are the canonical copies); every other agent
+   * gets symlinks into its own layout (e.g. codex → `~/.codex/skills`).
+   */
+  agents: SkillAgent[]
 }
+
+export type SkillAgent = 'claude' | 'codex'
 
 /** A remote machine the hub manages over (Tailscale) SSH. */
 export type MachineRecord = {
@@ -183,4 +191,5 @@ export const defaultConfig: WorkspaceConfig = {
   favourites: [],
   skillRepos: [],
   machines: [],
+  agents: ['claude'],
 }

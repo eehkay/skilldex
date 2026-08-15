@@ -71,6 +71,8 @@ export function tildify(target: string, homeDir: string): string {
   return target.startsWith(prefix) ? '~/' + target.slice(prefix.length) : target
 }
 
+export type SkillAgent = 'claude' | 'codex'
+
 export type WorkspaceConfig = {
   includePersonal: boolean
   includePlugins: boolean
@@ -78,6 +80,7 @@ export type WorkspaceConfig = {
   favourites: string[]
   skillRepos: string[]
   machines: MachineRecord[]
+  agents: SkillAgent[]
 }
 
 export type CreateSkillInput = {
