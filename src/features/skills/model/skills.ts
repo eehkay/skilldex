@@ -191,6 +191,12 @@ export function iconColorsFor(id: string): { bg: string; fg: string } {
   return { bg: ICON_BG[index], fg: ACCENT_PALETTE[index] }
 }
 
+/** Short display form of a pinned ref: 7 chars for a sha, as-is otherwise. */
+export function shortRef(ref: string | undefined): string | undefined {
+  if (!ref) return undefined
+  return /^[0-9a-f]{40}$/i.test(ref) ? ref.slice(0, 7) : ref
+}
+
 /** Two-letter monogram from a skill name (e.g. "pdf-form-filler" → "PD"). */
 export function monoFor(name: string): string {
   const words = name.split(/[\s._-]+/).filter(Boolean)

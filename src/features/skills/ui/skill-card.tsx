@@ -1,5 +1,5 @@
-import { FileText } from 'lucide-react'
-import { scopePillClass, type Skill } from '../model/skills'
+import { FileText, GitFork, Server } from 'lucide-react'
+import { scopePillClass, shortRef, type Skill } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
 
@@ -12,6 +12,11 @@ type SkillCardProps = {
 
 export function SkillCard({ skill, onOpen, onToggle, onToggleFavourite }: SkillCardProps) {
   const chips = skill.scope === 'project' ? skill.projects.slice(0, 2) : []
+  // Where the skill came from: the library ledger (imported skills) or the
+  // skills-CLI lock file (origin), whichever knows.
+  const provenance = skill.library?.repo ?? skill.origin?.label
+  const version = shortRef(skill.library?.ref)
+  const machineCount = skill.library?.targets.length ?? 0
 
   return (
     <div
@@ -53,6 +58,25 @@ export function SkillCard({ skill, onOpen, onToggle, onToggleFavourite }: SkillC
       <p className="line-clamp-2 min-h-[38px] text-[12.5px] leading-relaxed text-[#a1a1aa]">{skill.summary}</p>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {provenance && (
+          <span
+            title={version ? `Imported from ${provenance} @ ${version}` : `From ${provenance}`}
+            className="flex max-w-[220px] items-center gap-1 rounded-md border border-[#27272a] bg-[#1a1a1e] px-1.5 py-0.5 font-mono text-[11px] text-[#a1a1aa]"
+          >
+            <GitFork className="size-3 shrink-0 text-[#52525b]" />
+            <span className="truncate">{provenance}</span>
+            {version && <span className="shrink-0 text-[#52525b]">@{version}</span>}
+          </span>
+        )}
+        {machineCount > 0 && (
+          <span
+            title={`Syndicated to ${skill.library?.targets.map((target) => target.machine).join(', ')}`}
+            className="flex items-center gap-1 rounded-md border border-[#27272a] bg-[#1a1a1e] px-1.5 py-0.5 text-[11px] text-[#a1a1aa]"
+          >
+            <Server className="size-3 text-[#52525b]" />
+            {machineCount}
+          </span>
+        )}
         {chips.map((chip) => (
           <span
             key={chip}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Server } from 'lucide-react'
-import { scopePillClass, type MachineSnapshot, type SetSyndicationInput, type Skill, type SkillFile } from '../model/skills'
+import { scopePillClass, shortRef, type MachineSnapshot, type SetSyndicationInput, type Skill, type SkillFile } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
 
@@ -66,6 +66,12 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
     { label: 'Size', value: formatSize(totalSize) },
     { label: 'Symlink', value: skill.isSymlink ? 'yes' : 'no' },
     { label: 'Projects', value: skill.projects.length ? skill.projects.join(', ') : '—' },
+    ...(skill.library
+      ? [
+          { label: 'Imported from', value: skill.library.repo },
+          { label: 'Version', value: shortRef(skill.library.ref) ?? skill.library.ref },
+        ]
+      : []),
   ]
 
   return (
