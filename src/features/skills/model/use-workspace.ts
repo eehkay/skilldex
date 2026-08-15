@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { createHttpBridge } from './http-bridge'
 import {
   emptySnapshot,
   toSkill,
@@ -36,7 +37,16 @@ export type WorkspaceState = {
   installRepoSkill: (input: InstallRepoSkillInput) => Promise<WorkspaceSnapshot | null>
 }
 
-const bridge = () => (typeof window !== 'undefined' ? window.skilldex?.workspace : undefined)
+// Electron injects window.skilldex via preload; served by the hub instead,
+// fall back to the fetch-based twin of the same contract. Lazily created and
+// cached so every caller shares one instance.
+let httpBridge: ReturnType<typeof createHttpBridge> | undefined
+const bridge = () => {
+  if (typeof window === 'undefined') return undefined
+  if (window.skilldex?.workspace) return window.skilldex.workspace
+  httpBridge ??= createHttpBridge()
+  return httpBridge
+}
 
 export function useWorkspace(): WorkspaceState {
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(emptySnapshot)

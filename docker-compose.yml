@@ -1,0 +1,41 @@
+# Skilldex Hub for Coolify (or plain docker compose).
+#
+# The hub shares the tailscale sidecar's network namespace and is published
+# ONLY onto the tailnet via `tailscale serve` (see deploy/serve.json) — do not
+# attach a public domain to this app in Coolify. The tailnet is the auth.
+#
+# Required environment (set in Coolify, value from Doppler delmar-shared/dev_personal):
+#   TS_AUTHKEY  — a tailscale auth key for the hub node (tag it per your ACL)
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: skilldex-hub
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./deploy/serve.json:/config/serve.json:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  hub:
+    build:
+      context: .
+    network_mode: service:tailscale
+    environment:
+      - SKILLDEX_DATA_DIR=/data
+    volumes:
+      - hub-data:/data
+    depends_on:
+      - tailscale
+    restart: unless-stopped
+
+volumes:
+  tailscale-state:
+  hub-data:
