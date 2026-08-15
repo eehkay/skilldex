@@ -14,10 +14,12 @@ services:
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
-      - TS_SERVE_CONFIG=/config/serve.json
+      # The image defaults to userspace networking, where inbound connections
+      # never reach the shared netns — kernel mode is required for the hub's
+      # port to be reachable at the node's tailnet address.
+      - TS_USERSPACE=false
     volumes:
       - tailscale-state:/var/lib/tailscale
-      - ./deploy/serve.json:/config/serve.json:ro
     devices:
       - /dev/net/tun:/dev/net/tun
     cap_add:
