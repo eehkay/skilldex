@@ -53,6 +53,26 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
       const dir = typeof body.path === 'string' ? body.path : ''
       return { valid: dir.startsWith('/') && existsSync(dir) }
     }],
+    ['GET /api/machines', async () => workspace.listMachineSnapshots()],
+    ['POST /api/add-machine', async (_q, body) => workspace.addMachine(body.machine as never)],
+    ['POST /api/remove-machine', async (_q, body) => {
+      if (typeof body.name !== 'string') throw new Error('Missing machine name.')
+      return workspace.removeMachine(body.name)
+    }],
+    ['POST /api/refresh-machine', async (_q, body) => {
+      if (typeof body.name !== 'string') throw new Error('Missing machine name.')
+      return workspace.refreshMachine(body.name)
+    }],
+    ['POST /api/machine-install', async (_q, body) => {
+      if (typeof body.name !== 'string') throw new Error('Missing machine name.')
+      return workspace.installOnMachine(body.name, body.input as never)
+    }],
+    ['POST /api/machine-skill-op', async (_q, body) => {
+      const { name, op } = body
+      if (typeof name !== 'string') throw new Error('Missing machine name.')
+      if (op !== 'enable' && op !== 'disable' && op !== 'remove') throw new Error('Invalid op.')
+      return workspace.machineSkillOp(name, op, id(new URLSearchParams(), body))
+    }],
   ])
 }
 

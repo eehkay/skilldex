@@ -4,7 +4,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { createConfigStore } from './workspace/config'
 import { createSkillWorkspace } from './workspace/skill-workspace'
-import type { CreateSkillInput, InstallRepoSkillInput, WorkspaceConfig } from './workspace/types'
+import type {
+  CreateSkillInput,
+  InstallRepoSkillInput,
+  MachineRecord,
+  WorkspaceConfig,
+} from './workspace/types'
 
 // In dev the dock/menu show the default "Electron" name; override it before the
 // app is ready. (Packaged builds get the name from build.productName.)
@@ -43,7 +48,13 @@ app.whenReady().then(() => {
   }
 
   const configStore = createConfigStore(path.join(app.getPath('userData'), 'config.json'))
-  const workspace = createSkillWorkspace({ homeDir: os.homedir(), configStore })
+  const workspace = createSkillWorkspace({
+    homeDir: os.homedir(),
+    configStore,
+    // Machine management from the desktop app works when the agent bundle is
+    // built (dev checkouts); packaged builds without it degrade gracefully.
+    agentPath: path.join(app.getAppPath(), 'out', 'agent', 'skilldex-agent.js'),
+  })
 
   ipcMain.handle('skilldex:get-config', () => workspace.getConfig())
   ipcMain.handle('skilldex:get-snapshot', () => workspace.getSnapshot())
@@ -77,6 +88,18 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:refresh-skill-repo', (_event, slug: string) => workspace.refreshSkillRepo(slug))
   ipcMain.handle('skilldex:install-repo-skill', (_event, input: InstallRepoSkillInput) =>
     workspace.installRepoSkill(input),
+  )
+  ipcMain.handle('skilldex:list-machines', () => workspace.listMachineSnapshots())
+  ipcMain.handle('skilldex:add-machine', (_event, machine: MachineRecord) => workspace.addMachine(machine))
+  ipcMain.handle('skilldex:remove-machine', (_event, name: string) => workspace.removeMachine(name))
+  ipcMain.handle('skilldex:refresh-machine', (_event, name: string) => workspace.refreshMachine(name))
+  ipcMain.handle('skilldex:machine-install', (_event, name: string, input: InstallRepoSkillInput) =>
+    workspace.installOnMachine(name, input),
+  )
+  ipcMain.handle(
+    'skilldex:machine-skill-op',
+    (_event, name: string, op: 'enable' | 'disable' | 'remove', id: string) =>
+      workspace.machineSkillOp(name, op, id),
   )
 
   createMainWindow()

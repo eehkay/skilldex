@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, ListFilter, Loader2, Plus, RefreshCw } from 'lucide-react'
+import { AddMachineDialog } from '@/features/machines/ui/add-machine-dialog'
+import { MachineView } from '@/features/machines/ui/machine-view'
 import { Sidebar, type FilterKey, type SidebarCounts } from '@/features/navigation/ui/sidebar'
 import { AddRepoDialog } from '@/features/repos/ui/add-repo-dialog'
-import { InstallSkillDialog } from '@/features/repos/ui/install-skill-dialog'
+import { InstallSkillDialog, type InstallTarget } from '@/features/repos/ui/install-skill-dialog'
 import { RepoBrowser } from '@/features/repos/ui/repo-browser'
 import { SettingsDialog } from '@/features/settings/ui/settings-dialog'
 import type { RepoSkill, Skill } from '@/features/skills/model/skills'
@@ -78,6 +80,13 @@ export function Dashboard() {
     removeRepo,
     refreshRepo,
     installRepoSkill,
+    machineSnapshots,
+    machinesLoading,
+    addMachine,
+    removeMachine,
+    refreshMachine,
+    installOnMachine,
+    machineSkillOp,
   } = useWorkspace()
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
@@ -87,6 +96,8 @@ export function Dashboard() {
   const [activeRepo, setActiveRepo] = useState<string | null>(null)
   const [showAddRepo, setShowAddRepo] = useState(false)
   const [installTarget, setInstallTarget] = useState<RepoSkill | null>(null)
+  const [activeMachine, setActiveMachine] = useState<string | null>(null)
+  const [showAddMachine, setShowAddMachine] = useState(false)
 
   // Enabling/disabling moves a skill on disk, so its id changes. Re-select the
   // same skill (by name + kind) in the new snapshot so the detail view stays put.
@@ -159,6 +170,21 @@ export function Dashboard() {
   const selected = selectedId ? skills.find((skill) => skill.id === selectedId) ?? null : null
   const heading = HEADINGS[filter]
   const activeCatalog = activeRepo ? repoCatalogs.find((repo) => repo.slug === activeRepo) ?? null : null
+  const activeMachineEntry = activeMachine
+    ? machineSnapshots.find((entry) => entry.machine.name === activeMachine) ?? null
+    : null
+
+  // Install destinations: this app's own library plus every reachable machine.
+  const installTargets: InstallTarget[] = [
+    { key: 'local', label: 'This machine (local)', projects: snapshot.projects },
+    ...machineSnapshots
+      .filter((entry) => entry.snapshot)
+      .map((entry) => ({
+        key: entry.machine.name,
+        label: `${entry.machine.name} (${entry.machine.host})`,
+        projects: entry.snapshot?.projects ?? [],
+      })),
+  ]
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#09090b] text-[#fafafa]">
@@ -168,16 +194,33 @@ export function Dashboard() {
         projects={snapshot.projects}
         repos={repoCatalogs}
         activeRepo={activeRepo}
+        machines={machineSnapshots}
+        activeMachine={activeMachine}
         query={query}
         onQuery={setQuery}
-        onFilter={(key) => { setFilter(key); setSelectedId(null); setActiveRepo(null) }}
-        onSelectRepo={(slug) => { setActiveRepo(slug); setSelectedId(null) }}
+        onFilter={(key) => { setFilter(key); setSelectedId(null); setActiveRepo(null); setActiveMachine(null) }}
+        onSelectRepo={(slug) => { setActiveRepo(slug); setSelectedId(null); setActiveMachine(null) }}
         onAddRepo={() => setShowAddRepo(true)}
+        onSelectMachine={(name) => { setActiveMachine(name); setSelectedId(null); setActiveRepo(null) }}
+        onAddMachine={() => setShowAddMachine(true)}
         onOpenSettings={() => setShowSettings(true)}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {activeCatalog ? (
+        {activeMachineEntry ? (
+          <MachineView
+            entry={activeMachineEntry}
+            busy={machinesLoading}
+            onRefresh={() => void refreshMachine(activeMachineEntry.machine.name).catch(() => {})}
+            onRemove={() => {
+              setActiveMachine(null)
+              void removeMachine(activeMachineEntry.machine.name).catch(() => {})
+            }}
+            onSkillOp={(op, id) =>
+              void machineSkillOp(activeMachineEntry.machine.name, op, id).catch(() => {})
+            }
+          />
+        ) : activeCatalog ? (
           <RepoBrowser
             catalog={activeCatalog}
             localSkills={skills}
@@ -333,11 +376,21 @@ export function Dashboard() {
       <InstallSkillDialog
         skill={installTarget}
         repoSlug={activeRepo ?? ''}
-        projects={snapshot.projects}
+        targets={installTargets}
         onClose={() => setInstallTarget(null)}
-        onInstall={async ({ scope, projectName }) => {
+        onInstall={async ({ targetKey, scope, projectName }) => {
           if (!installTarget || !activeRepo) return
-          await installRepoSkill({ repo: activeRepo, skillId: installTarget.id, scope, projectName })
+          const input = { repo: activeRepo, skillId: installTarget.id, scope, projectName }
+          if (targetKey === 'local') await installRepoSkill(input)
+          else await installOnMachine(targetKey, input)
+        }}
+      />
+
+      <AddMachineDialog
+        open={showAddMachine}
+        onClose={() => setShowAddMachine(false)}
+        onAdd={async (machine) => {
+          await addMachine(machine)
         }}
       />
     </div>

@@ -101,6 +101,26 @@ export type WorkspaceConfig = {
   favourites: string[]
   /** User-added GitHub skill repos, stored as normalized `owner/repo` slugs. */
   skillRepos: string[]
+  /** Remote machines managed over SSH (hub mode). */
+  machines: MachineRecord[]
+}
+
+/** A remote machine the hub manages over (Tailscale) SSH. */
+export type MachineRecord = {
+  /** Display name, unique among machines (e.g. `tower`). */
+  name: string
+  /** SSH host — MagicDNS name or address. */
+  host: string
+  /** Remote login user (differs per OS in mixed fleets). */
+  user: string
+}
+
+/** A remote machine's library, as reported by the agent. */
+export type MachineSnapshot = {
+  machine: MachineRecord
+  snapshot: WorkspaceSnapshot | null
+  /** Present when the machine could not be reached or the agent failed. */
+  error?: string
 }
 
 export type CreateSkillInput = {
@@ -162,4 +182,5 @@ export const defaultConfig: WorkspaceConfig = {
   projectRoots: [],
   favourites: [],
   skillRepos: [],
+  machines: [],
 }

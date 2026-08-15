@@ -50,5 +50,15 @@ function normalize(value: unknown): WorkspaceConfig {
     skillRepos: Array.isArray(input.skillRepos)
       ? [...new Set(input.skillRepos.filter((slug): slug is string => typeof slug === 'string'))]
       : [],
+    machines: Array.isArray(input.machines)
+      ? input.machines.filter(
+          (machine): machine is WorkspaceConfig['machines'][number] =>
+            typeof machine === 'object' &&
+            machine !== null &&
+            typeof (machine as { name?: unknown }).name === 'string' &&
+            typeof (machine as { host?: unknown }).host === 'string' &&
+            typeof (machine as { user?: unknown }).user === 'string',
+        )
+      : [],
   }
 }

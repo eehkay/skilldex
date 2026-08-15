@@ -1,6 +1,6 @@
-import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Plus, PowerOff, Search, Settings } from 'lucide-react'
+import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Plus, PowerOff, Search, Server, Settings } from 'lucide-react'
 import type { ComponentType } from 'react'
-import { ACCENT_PALETTE, type ProjectRecord, type RepoCatalog } from '@/features/skills/model/skills'
+import { ACCENT_PALETTE, type MachineSnapshot, type ProjectRecord, type RepoCatalog } from '@/features/skills/model/skills'
 
 export type FilterKey = 'all' | 'favourites' | 'global' | 'plugin' | 'project' | 'disabled'
 
@@ -13,11 +13,16 @@ type SidebarProps = {
   repos: RepoCatalog[]
   /** Slug of the repo whose catalog fills the main pane, if any. */
   activeRepo: string | null
+  machines: MachineSnapshot[]
+  /** Name of the machine whose library fills the main pane, if any. */
+  activeMachine: string | null
   query: string
   onQuery: (value: string) => void
   onFilter: (key: FilterKey) => void
   onSelectRepo: (slug: string) => void
   onAddRepo: () => void
+  onSelectMachine: (name: string) => void
+  onAddMachine: () => void
   onOpenSettings: () => void
 }
 
@@ -30,7 +35,7 @@ const NAV: Array<{ key: FilterKey; label: string; icon: ComponentType<{ classNam
   { key: 'disabled', label: 'Disabled', icon: PowerOff },
 ]
 
-export function Sidebar({ active, counts, projects, repos, activeRepo, query, onQuery, onFilter, onSelectRepo, onAddRepo, onOpenSettings }: SidebarProps) {
+export function Sidebar({ active, counts, projects, repos, activeRepo, machines, activeMachine, query, onQuery, onFilter, onSelectRepo, onAddRepo, onSelectMachine, onAddMachine, onOpenSettings }: SidebarProps) {
   return (
     <aside className="flex w-[248px] shrink-0 flex-col border-r border-[#1c1c20] bg-[#0b0b0d] px-3 py-3.5">
       <div className="flex items-center gap-2.5 px-2 pb-3.5 pt-1.5">
@@ -57,7 +62,7 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, query, on
       <nav className="flex flex-col gap-0.5">
         {NAV.map((item) => {
           const Icon = item.icon
-          const isActive = active === item.key && activeRepo === null
+          const isActive = active === item.key && activeRepo === null && activeMachine === null
           return (
             <button
               key={item.key}
@@ -120,6 +125,53 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, query, on
                 ) : (
                   <span className={`font-mono text-[11px] ${isActive ? 'text-[#fb923c]' : 'text-[#52525b]'}`}>
                     {repo.skills.length}
+                  </span>
+                )}
+              </button>
+            )
+          })
+        )}
+      </div>
+
+      <div className="flex items-center justify-between px-2 pb-2 pt-5">
+        <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-[#52525b]">Machines</span>
+        <button
+          type="button"
+          onClick={onAddMachine}
+          aria-label="Add machine"
+          className="grid size-5 place-items-center rounded-md text-[#52525b] transition hover:bg-[#141417] hover:text-[#a1a1aa]"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {machines.length === 0 ? (
+          <p className="px-2 text-[12px] leading-relaxed text-[#52525b]">
+            No machines yet. Add one to manage its skills over SSH.
+          </p>
+        ) : (
+          machines.map((entry) => {
+            const isActive = activeMachine === entry.machine.name
+            return (
+              <button
+                key={entry.machine.name}
+                type="button"
+                onClick={() => onSelectMachine(entry.machine.name)}
+                className={`flex items-center gap-3 rounded-[9px] px-2 py-2 text-[13px] font-medium transition ${
+                  isActive
+                    ? 'bg-[#1a1109] text-[#fb923c] shadow-[inset_2px_0_0_#f97316]'
+                    : 'text-[#a1a1aa] hover:bg-[#141417]'
+                }`}
+              >
+                <span className="flex w-[18px] justify-center">
+                  <Server className="size-[15px]" />
+                </span>
+                <span className="flex-1 truncate text-left">{entry.machine.name}</span>
+                {entry.error ? (
+                  <AlertCircle className="size-3.5 shrink-0 text-[#f87171]" />
+                ) : (
+                  <span className={`font-mono text-[11px] ${isActive ? 'text-[#fb923c]' : 'text-[#52525b]'}`}>
+                    {entry.snapshot?.skills.length ?? '…'}
                   </span>
                 )}
               </button>

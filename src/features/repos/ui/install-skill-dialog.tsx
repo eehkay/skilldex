@@ -2,16 +2,30 @@ import { useState } from 'react'
 import { Globe, Layers, Loader2, X } from 'lucide-react'
 import type { ProjectRecord, RepoSkill } from '@/features/skills/model/skills'
 
+/** An installable destination: this app's own library, or a remote machine. */
+export type InstallTarget = {
+  /** 'local' for this app; otherwise the machine name. */
+  key: string
+  label: string
+  projects: ProjectRecord[]
+}
+
 type InstallSkillDialogProps = {
   /** The catalog skill being installed, or null when the dialog is closed. */
   skill: RepoSkill | null
   repoSlug: string
-  projects: ProjectRecord[]
+  /** First entry is the local library; any further entries are machines. */
+  targets: InstallTarget[]
   onClose: () => void
-  onInstall: (input: { scope: 'global' | 'project'; projectName?: string }) => Promise<void>
+  onInstall: (input: {
+    targetKey: string
+    scope: 'global' | 'project'
+    projectName?: string
+  }) => Promise<void>
 }
 
-export function InstallSkillDialog({ skill, repoSlug, projects, onClose, onInstall }: InstallSkillDialogProps) {
+export function InstallSkillDialog({ skill, repoSlug, targets, onClose, onInstall }: InstallSkillDialogProps) {
+  const [targetKey, setTargetKey] = useState('local')
   const [scope, setScope] = useState<'global' | 'project'>('global')
   const [projectName, setProjectName] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -19,11 +33,17 @@ export function InstallSkillDialog({ skill, repoSlug, projects, onClose, onInsta
 
   if (!skill) return null
 
-  const resolvedProject = projectName || projects[0]?.name || ''
+  const target = targets.find((entry) => entry.key === targetKey) ?? targets[0]
+  const projects = target?.projects ?? []
+  const resolvedProject =
+    projectName && projects.some((project) => project.name === projectName)
+      ? projectName
+      : projects[0]?.name || ''
   const canProject = projects.length > 0
   const canSubmit = !submitting && (scope === 'global' || Boolean(resolvedProject))
 
   const close = () => {
+    setTargetKey('local')
     setScope('global')
     setProjectName('')
     setError(null)
@@ -34,7 +54,11 @@ export function InstallSkillDialog({ skill, repoSlug, projects, onClose, onInsta
     setSubmitting(true)
     setError(null)
     try {
-      await onInstall({ scope, projectName: scope === 'project' ? resolvedProject : undefined })
+      await onInstall({
+        targetKey: target.key,
+        scope,
+        projectName: scope === 'project' ? resolvedProject : undefined,
+      })
       close()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -68,8 +92,27 @@ export function InstallSkillDialog({ skill, repoSlug, projects, onClose, onInsta
         </div>
 
         <div className="flex flex-col gap-4 px-6 py-5">
+          {targets.length > 1 && (
+            <div>
+              <div className="mb-1.5 text-[12.5px] font-medium text-[#d4d4d8]">Machine</div>
+              <select
+                value={target.key}
+                onChange={(event) => {
+                  setTargetKey(event.target.value)
+                  setProjectName('')
+                }}
+                className="h-[38px] w-full rounded-[9px] border border-[#27272a] bg-[#0c0c0e] px-3 text-[13.5px] text-[#e4e4e7] outline-none focus:border-[#3a3a42]"
+              >
+                {targets.map((entry) => (
+                  <option key={entry.key} value={entry.key}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
-            <div className="mb-1.5 text-[12.5px] font-medium text-[#d4d4d8]">Install to</div>
+            <div className="mb-1.5 text-[12.5px] font-medium text-[#d4d4d8]">Scope</div>
             <div className="grid grid-cols-2 gap-2.5">
               <ScopeOption
                 icon={<Globe className="size-[15px]" />}

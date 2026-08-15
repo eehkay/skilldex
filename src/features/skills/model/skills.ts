@@ -77,6 +77,7 @@ export type WorkspaceConfig = {
   projectRoots: string[]
   favourites: string[]
   skillRepos: string[]
+  machines: MachineRecord[]
 }
 
 export type CreateSkillInput = {
@@ -110,6 +111,18 @@ export type InstallRepoSkillInput = {
   skillId: string
   scope: 'global' | 'project'
   projectName?: string
+}
+
+export type MachineRecord = {
+  name: string
+  host: string
+  user: string
+}
+
+export type MachineSnapshot = {
+  machine: MachineRecord
+  snapshot: WorkspaceSnapshot | null
+  error?: string
 }
 
 /**

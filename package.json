@@ -11,7 +11,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
-    "build:hub": "npm run typecheck && electron-vite build && esbuild server/index.ts --bundle --platform=node --target=node22 --outfile=out/hub/server.js",
+    "build:agent": "esbuild agent/index.ts --bundle --platform=node --target=node22 --outfile=out/agent/skilldex-agent.js",
+    "build:hub": "npm run typecheck && electron-vite build && esbuild server/index.ts --bundle --platform=node --target=node22 --outfile=out/hub/server.js && npm run build:agent",
     "serve": "node out/hub/server.js",
     "typecheck": "tsc -b",
     "test": "vitest run",

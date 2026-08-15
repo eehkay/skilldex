@@ -5,6 +5,8 @@ import {
   toSkill,
   type CreateSkillInput,
   type InstallRepoSkillInput,
+  type MachineRecord,
+  type MachineSnapshot,
   type RepoCatalog,
   type Skill,
   type SkillFile,
@@ -35,6 +37,13 @@ export type WorkspaceState = {
   removeRepo: (slug: string) => Promise<void>
   refreshRepo: (slug: string) => Promise<void>
   installRepoSkill: (input: InstallRepoSkillInput) => Promise<WorkspaceSnapshot | null>
+  machineSnapshots: MachineSnapshot[]
+  machinesLoading: boolean
+  addMachine: (machine: MachineRecord) => Promise<void>
+  removeMachine: (name: string) => Promise<void>
+  refreshMachine: (name: string) => Promise<void>
+  installOnMachine: (name: string, input: InstallRepoSkillInput) => Promise<void>
+  machineSkillOp: (name: string, op: 'enable' | 'disable' | 'remove', id: string) => Promise<void>
 }
 
 // Electron injects window.skilldex via preload; served by the hub instead,
@@ -55,6 +64,8 @@ export function useWorkspace(): WorkspaceState {
   const [error, setError] = useState<string | null>(null)
   const [repoCatalogs, setRepoCatalogs] = useState<RepoCatalog[]>([])
   const [reposLoading, setReposLoading] = useState(false)
+  const [machineSnapshots, setMachineSnapshots] = useState<MachineSnapshot[]>([])
+  const [machinesLoading, setMachinesLoading] = useState(false)
 
   const run = useCallback(async (task: () => Promise<WorkspaceSnapshot>) => {
     setLoading(true)
@@ -158,16 +169,71 @@ export function useWorkspace(): WorkspaceState {
     [mutate],
   )
 
+  // Machine mutations mirror the repo ones: full-list ops replace the list,
+  // single-machine ops patch that machine's entry in place. Errors rethrow
+  // for the calling dialog/pane to display.
+  const mutateMachines = useCallback(async (op: () => Promise<MachineSnapshot[]> | undefined) => {
+    setMachinesLoading(true)
+    try {
+      const next = await op()
+      if (next) setMachineSnapshots(next)
+    } finally {
+      setMachinesLoading(false)
+    }
+  }, [])
+
+  const patchMachine = useCallback(async (op: () => Promise<MachineSnapshot> | undefined) => {
+    setMachinesLoading(true)
+    try {
+      const next = await op()
+      if (next)
+        setMachineSnapshots((current) =>
+          current.map((entry) => (entry.machine.name === next.machine.name ? next : entry)),
+        )
+    } finally {
+      setMachinesLoading(false)
+    }
+  }, [])
+
+  const addMachine = useCallback(
+    (machine: MachineRecord) => mutateMachines(() => bridge()?.addMachine(machine)),
+    [mutateMachines],
+  )
+  const removeMachine = useCallback(
+    (name: string) => mutateMachines(() => bridge()?.removeMachine(name)),
+    [mutateMachines],
+  )
+  const refreshMachine = useCallback(
+    (name: string) => patchMachine(() => bridge()?.refreshMachine(name)),
+    [patchMachine],
+  )
+  const installOnMachine = useCallback(
+    (name: string, input: InstallRepoSkillInput) =>
+      patchMachine(() => bridge()?.installOnMachine(name, input)),
+    [patchMachine],
+  )
+  const machineSkillOp = useCallback(
+    (name: string, op: 'enable' | 'disable' | 'remove', id: string) =>
+      patchMachine(() => bridge()?.machineSkillOp(name, op, id)),
+    [patchMachine],
+  )
+
   useEffect(() => {
     void rescan()
-    // Repo catalogs load independently of the local scan — they hit the
-    // network, so a slow or offline GitHub never blocks the local library.
+    // Repo catalogs and machine snapshots load independently of the local
+    // scan — both hit the network, so neither blocks the local library.
     setReposLoading(true)
     bridge()
       ?.listRepoCatalogs()
       .then(setRepoCatalogs)
       .catch(() => {})
       .finally(() => setReposLoading(false))
+    setMachinesLoading(true)
+    bridge()
+      ?.listMachineSnapshots()
+      .then(setMachineSnapshots)
+      .catch(() => {})
+      .finally(() => setMachinesLoading(false))
   }, [rescan])
 
   return {
@@ -193,5 +259,12 @@ export function useWorkspace(): WorkspaceState {
     removeRepo,
     refreshRepo,
     installRepoSkill,
+    machineSnapshots,
+    machinesLoading,
+    addMachine,
+    removeMachine,
+    refreshMachine,
+    installOnMachine,
+    machineSkillOp,
   }
 }

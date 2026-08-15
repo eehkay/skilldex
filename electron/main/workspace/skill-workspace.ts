@@ -32,9 +32,12 @@ import {
   scaffoldSkill,
   slugify,
 } from './skill-manager'
+import { createMachineManager, type ExecLike, type MachineManager } from './machines'
 import type {
   CreateSkillInput,
   InstallRepoSkillInput,
+  MachineRecord,
+  MachineSnapshot,
   RepoCatalog,
   SkillFile,
   SkillRecord,
@@ -48,6 +51,12 @@ export type SkillWorkspaceDeps = {
   configStore: ConfigStore
   /** Injected in tests; defaults to the global fetch. */
   fetchImpl?: FetchLike
+  /** Bundled agent file for machine management; absent → machines unavailable. */
+  agentPath?: string
+  /** Injected in tests; defaults to spawning real ssh. */
+  execImpl?: ExecLike
+  /** Persist SSH host keys here (container mode). */
+  knownHostsFile?: string
 }
 
 export type SkillWorkspace = {
@@ -80,6 +89,18 @@ export type SkillWorkspace = {
   refreshSkillRepo(slug: string): Promise<RepoCatalog[]>
   /** Download a catalog skill into the global or a project skills root. */
   installRepoSkill(input: InstallRepoSkillInput): Promise<WorkspaceSnapshot>
+  /** Every configured machine's library, fetched in parallel (per-machine errors inline). */
+  listMachineSnapshots(): Promise<MachineSnapshot[]>
+  /** Validate reachability (pushes the agent), then persist a new machine. */
+  addMachine(machine: MachineRecord): Promise<MachineSnapshot[]>
+  /** Forget a machine (never touches its skills). */
+  removeMachine(name: string): Promise<MachineSnapshot[]>
+  /** Re-scan one machine. */
+  refreshMachine(name: string): Promise<MachineSnapshot>
+  /** Install a catalog skill onto a machine. Returns that machine's fresh snapshot. */
+  installOnMachine(name: string, input: InstallRepoSkillInput): Promise<MachineSnapshot>
+  /** Enable/disable/remove a skill on a machine. Returns its fresh snapshot. */
+  machineSkillOp(name: string, op: 'enable' | 'disable' | 'remove', id: string): Promise<MachineSnapshot>
 }
 
 /** Management is only meaningful for skills we own on disk, never plugin skills. */
@@ -92,7 +113,30 @@ export function createSkillWorkspace({
   homeDir,
   configStore,
   fetchImpl = globalThis.fetch as unknown as FetchLike,
+  agentPath,
+  execImpl,
+  knownHostsFile,
 }: SkillWorkspaceDeps): SkillWorkspace {
+  const machineManager: MachineManager | null = agentPath
+    ? createMachineManager({ agentPath, execImpl, knownHostsFile })
+    : null
+
+  function machines(): MachineManager {
+    if (!machineManager) throw new Error('Machine management is not available in this build.')
+    return machineManager
+  }
+
+  async function findMachine(name: string): Promise<MachineRecord> {
+    const config = await configStore.load()
+    const machine = config.machines.find((entry) => entry.name === name)
+    if (!machine) throw new Error(`Unknown machine: ${name}`)
+    return machine
+  }
+
+  async function snapshotsFor(records: MachineRecord[]): Promise<MachineSnapshot[]> {
+    const manager = machines()
+    return Promise.all(records.map((machine) => manager.snapshot(machine)))
+  }
   // Ids seen in the most recent snapshot — the allow-list guarding path access
   // so the renderer can never read or reveal an arbitrary filesystem path.
   const known = new Map<string, SkillRecord>()
@@ -352,11 +396,73 @@ export function createSkillWorkspace({
 
       return buildSnapshot(config)
     },
+
+    async listMachineSnapshots() {
+      const config = await configStore.load()
+      return snapshotsFor(config.machines)
+    },
+
+    async addMachine(machine) {
+      const name = machine.name.trim()
+      const host = machine.host.trim()
+      const user = machine.user.trim()
+      if (!name || !host || !user) throw new Error('Machine name, host, and user are all required.')
+
+      const config = await configStore.load()
+      if (config.machines.some((entry) => entry.name === name))
+        throw new Error(`A machine named "${name}" already exists.`)
+
+      // Reach it (and push the agent) before persisting, so a typo'd host is
+      // rejected with the SSH error instead of being saved broken.
+      const record: MachineRecord = { name, host, user }
+      await machines().ping(record)
+
+      const saved = await configStore.save({ ...config, machines: [...config.machines, record] })
+      return snapshotsFor(saved.machines)
+    },
+
+    async removeMachine(name) {
+      const config = await configStore.load()
+      const saved = await configStore.save({
+        ...config,
+        machines: config.machines.filter((entry) => entry.name !== name),
+      })
+      return snapshotsFor(saved.machines)
+    },
+
+    async refreshMachine(name) {
+      return machines().snapshot(await findMachine(name))
+    },
+
+    async installOnMachine(name, input) {
+      const config = await configStore.load()
+      // Same trust model as local installs: only skills we discovered
+      // ourselves, from repos the user added.
+      if (!config.skillRepos.includes(input.repo)) throw new Error('Unknown skill repo.')
+      const scan = await scanRepo(input.repo)
+      if (!scan.catalog.skills.some((skill) => skill.id === input.skillId))
+        throw new Error('Unknown skill in this repo.')
+
+      const machine = await findMachine(name)
+      const snapshot = await machines().install(machine, {
+        repo: input.repo,
+        skillId: input.skillId,
+        scope: input.scope,
+        projectName: input.projectName,
+      })
+      return { machine, snapshot }
+    },
+
+    async machineSkillOp(name, op, id) {
+      const machine = await findMachine(name)
+      const snapshot = await machines().skillOp(machine, op, id)
+      return { machine, snapshot }
+    },
   }
 }
 
 /** Merge one skill's provenance entry into `~/.agents/.skill-lock.json`. */
-async function writeSkillLockEntry(
+export async function writeSkillLockEntry(
   homeDir: string,
   skillDirName: string,
   entry: { source: string; sourceType: string; sourceUrl: string; skillPath: string },

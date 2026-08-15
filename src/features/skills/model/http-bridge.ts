@@ -16,6 +16,8 @@
 import type {
   CreateSkillInput,
   InstallRepoSkillInput,
+  MachineRecord,
+  MachineSnapshot,
   RepoCatalog,
   SkillFile,
   WorkspaceConfig,
@@ -68,5 +70,13 @@ export function createHttpBridge(): WorkspaceBridge {
     refreshSkillRepo: (slug: string) => call<RepoCatalog[]>('POST', 'refresh-repo', { slug }),
     installRepoSkill: (input: InstallRepoSkillInput) =>
       call<WorkspaceSnapshot>('POST', 'install-repo-skill', { input }),
+    listMachineSnapshots: () => call<MachineSnapshot[]>('GET', 'machines'),
+    addMachine: (machine: MachineRecord) => call<MachineSnapshot[]>('POST', 'add-machine', { machine }),
+    removeMachine: (name: string) => call<MachineSnapshot[]>('POST', 'remove-machine', { name }),
+    refreshMachine: (name: string) => call<MachineSnapshot>('POST', 'refresh-machine', { name }),
+    installOnMachine: (name: string, input: InstallRepoSkillInput) =>
+      call<MachineSnapshot>('POST', 'machine-install', { name, input }),
+    machineSkillOp: (name: string, op: 'enable' | 'disable' | 'remove', id: string) =>
+      call<MachineSnapshot>('POST', 'machine-skill-op', { name, op, id }),
   }
 }

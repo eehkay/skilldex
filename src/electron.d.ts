@@ -3,6 +3,8 @@ export {}
 import type {
   CreateSkillInput,
   InstallRepoSkillInput,
+  MachineRecord,
+  MachineSnapshot,
   RepoCatalog,
   SkillFile,
   WorkspaceConfig,
@@ -30,6 +32,12 @@ declare global {
         removeSkillRepo(slug: string): Promise<RepoCatalog[]>
         refreshSkillRepo(slug: string): Promise<RepoCatalog[]>
         installRepoSkill(input: InstallRepoSkillInput): Promise<WorkspaceSnapshot>
+        listMachineSnapshots(): Promise<MachineSnapshot[]>
+        addMachine(machine: MachineRecord): Promise<MachineSnapshot[]>
+        removeMachine(name: string): Promise<MachineSnapshot[]>
+        refreshMachine(name: string): Promise<MachineSnapshot>
+        installOnMachine(name: string, input: InstallRepoSkillInput): Promise<MachineSnapshot>
+        machineSkillOp(name: string, op: 'enable' | 'disable' | 'remove', id: string): Promise<MachineSnapshot>
       }
     }
   }

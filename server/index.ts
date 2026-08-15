@@ -42,6 +42,9 @@ async function main(): Promise<void> {
   const workspace = createSkillWorkspace({
     homeDir,
     configStore: createConfigStore(path.join(dataDir, 'config.json')),
+    // The bundled machine agent ships next to the server in the image.
+    agentPath: process.env.SKILLDEX_AGENT_PATH || path.join(__dirname, '..', 'agent', 'skilldex-agent.js'),
+    knownHostsFile: path.join(dataDir, 'known_hosts'),
   })
   const routes = createApiRoutes(workspace)
 

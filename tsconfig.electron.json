@@ -9,5 +9,5 @@
     "noEmit": true,
     "strict": true
   },
-  "include": ["electron", "server", "electron.vite.config.ts"]
+  "include": ["electron", "server", "agent", "electron.vite.config.ts"]
 }
