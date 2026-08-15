@@ -10,7 +10,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { syncAgentLinks } from './agent-links'
-import { categorizeSkills, createAnthropicClassifier, type ClassifierClient } from './categorizer'
+import { categorizeSkills, createClassifierFromConfig, type ClassifierClient } from './categorizer'
 import type { ConfigStore } from './config'
 import { createMemoryLibraryStore, type LibraryStore } from './library-store'
 import { favouriteKeyFor } from './favourite-key'
@@ -68,8 +68,8 @@ export type SkillWorkspaceDeps = {
   knownHostsFile?: string
   /** Library ledger (import provenance + syndication); in-memory when absent. */
   libraryStore?: LibraryStore
-  /** Builds the LLM classifier from an API key; injected in tests. */
-  classifierFactory?: (apiKey: string) => ClassifierClient
+  /** Builds the LLM classifier from config; injected in tests. */
+  classifierFactory?: (config: WorkspaceConfig) => ClassifierClient | null
 }
 
 /** Result of a syndication change: the library view plus the machine's new state. */
@@ -214,7 +214,7 @@ export function createSkillWorkspace({
   execImpl,
   knownHostsFile,
   libraryStore = createMemoryLibraryStore(),
-  classifierFactory = createAnthropicClassifier,
+  classifierFactory = createClassifierFromConfig,
 }: SkillWorkspaceDeps): SkillWorkspace {
   const machineManager: MachineManager | null = agentPath
     ? createMachineManager({ agentPath, execImpl, knownHostsFile })
@@ -969,7 +969,7 @@ export function createSkillWorkspace({
       const config = await configStore.load()
       const before = await buildSnapshot(config)
       const ledger = await libraryStore.load()
-      const client = config.anthropicApiKey ? classifierFactory(config.anthropicApiKey) : null
+      const client = classifierFactory(config)
 
       // Candidates: personal (library) skills, skipping manual assignments
       // always and existing assignments unless forced.

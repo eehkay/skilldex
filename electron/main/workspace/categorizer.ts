@@ -186,3 +186,77 @@ export function createAnthropicClassifier(apiKey: string): ClassifierClient {
     },
   }
 }
+
+/**
+ * OpenRouter classifier — OpenAI-style chat completions over plain fetch, no
+ * new dependency. Structured output support varies by routed model, so the
+ * prompt asks for JSON and every category is validated against the taxonomy
+ * before it can reach the ledger.
+ */
+export function createOpenRouterClassifier(apiKey: string, model = 'anthropic/claude-haiku-4.5'): ClassifierClient {
+  return {
+    async classify({ skills }) {
+      const taxonomy = CATEGORIES.map((category) => `- ${category.id}: ${category.label} — ${category.hint}`).join('\n')
+      const listing = skills
+        .map((skill, index) => `${index + 1}. name: ${skill.name}\n   description: ${skill.description || '(none)'}`)
+        .join('\n')
+
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/eehkay/skillsync',
+          'X-Title': 'SkillSync',
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You categorize coding-agent skills into a fixed taxonomy. Each skill has a name and a description written to tell an agent when to use it. Assign exactly one category per skill from the taxonomy — the best single fit for what the skill is primarily for — and a confidence from 0 to 1. Prefer the category a person browsing a library would look under. Respond with ONLY a JSON object of the shape {"assignments":[{"name":string,"category":string,"confidence":number}]}, including every skill given, using each exact name. Category must be one of the taxonomy ids.',
+            },
+            { role: 'user', content: `Taxonomy:\n${taxonomy}\n\nSkills:\n${listing}` },
+          ],
+        }),
+      })
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '')
+        throw new Error(`OpenRouter ${response.status}: ${detail.slice(0, 200) || response.statusText}`)
+      }
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>
+      }
+      const content = data.choices?.[0]?.message?.content ?? ''
+      // Some models wrap JSON in fences despite json_object; strip defensively.
+      const raw = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const parsed = JSON.parse(raw) as { assignments?: Array<{ name: string; category: string; confidence: number }> }
+      return Array.isArray(parsed.assignments) ? parsed.assignments : []
+    },
+  }
+}
+
+export type ClassifierProvider = 'anthropic' | 'openrouter'
+
+/** Build the configured classifier, or null when no key is available. */
+export function createClassifierFromConfig(config: {
+  categorizerProvider?: ClassifierProvider
+  anthropicApiKey?: string
+  openRouterApiKey?: string
+  openRouterModel?: string
+}): ClassifierClient | null {
+  // Explicit provider wins; otherwise infer from whichever key is present
+  // (config first, then environment).
+  const provider =
+    config.categorizerProvider ??
+    (config.openRouterApiKey || process.env.OPENROUTER_API_KEY ? 'openrouter' : 'anthropic')
+  if (provider === 'openrouter') {
+    const key = config.openRouterApiKey || process.env.OPENROUTER_API_KEY
+    return key ? createOpenRouterClassifier(key, config.openRouterModel || undefined) : null
+  }
+  const key = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY
+  return key ? createAnthropicClassifier(key) : null
+}

@@ -88,7 +88,7 @@ describe('workspace categorizeLibrary / setSkillCategory', () => {
       homeDir: tmp,
       configStore,
       libraryStore: createLibraryStore(path.join(tmp, 'library.json')),
-      classifierFactory: () => ({
+      classifierFactory: (): ClassifierClient => ({
         async classify({ skills }) {
           calls++
           return skills.map((skill) => ({ name: skill.name, category: 'content', confidence: 0.7 }))
@@ -138,5 +138,31 @@ describe('workspace categorizeLibrary / setSkillCategory', () => {
     const skill = (await ws.getSnapshot()).skills.find((entry) => entry.name === 'humanizer')!
     const snapshot = await ws.setSkillCategory(skill.id, null)
     expect(snapshot.skills.find((entry) => entry.name === 'humanizer')?.library?.category).toBeUndefined()
+  })
+})
+
+describe('createClassifierFromConfig', () => {
+  it('honours the configured provider and env-var keys', async () => {
+    const { createClassifierFromConfig } = await import('../categorizer')
+    const saved = { or: process.env.OPENROUTER_API_KEY, an: process.env.ANTHROPIC_API_KEY }
+    try {
+      delete process.env.OPENROUTER_API_KEY
+      delete process.env.ANTHROPIC_API_KEY
+      expect(createClassifierFromConfig({})).toBeNull()
+      expect(createClassifierFromConfig({ categorizerProvider: 'openrouter' })).toBeNull()
+
+      process.env.OPENROUTER_API_KEY = 'sk-or-test'
+      // Explicit provider picks up the env key.
+      expect(createClassifierFromConfig({ categorizerProvider: 'openrouter' })).not.toBeNull()
+      // No explicit provider: infer openrouter from the env key.
+      expect(createClassifierFromConfig({})).not.toBeNull()
+      // Explicit anthropic with no anthropic key stays null even though an OR key exists.
+      expect(createClassifierFromConfig({ categorizerProvider: 'anthropic' })).toBeNull()
+    } finally {
+      if (saved.or === undefined) delete process.env.OPENROUTER_API_KEY
+      else process.env.OPENROUTER_API_KEY = saved.or
+      if (saved.an === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = saved.an
+    }
   })
 })

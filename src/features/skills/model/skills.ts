@@ -133,7 +133,10 @@ export type WorkspaceConfig = {
   skillRepos: string[]
   machines: MachineRecord[]
   agents: SkillAgent[]
+  categorizerProvider?: 'anthropic' | 'openrouter'
   anthropicApiKey?: string
+  openRouterApiKey?: string
+  openRouterModel?: string
 }
 
 export type CreateSkillInput = {

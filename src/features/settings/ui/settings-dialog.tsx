@@ -158,17 +158,58 @@ export function SettingsDialog({ open, config, homeDir, onClose, onConfigure, on
           <section className="mt-7">
             <div className="text-[13px] font-semibold text-[#e4e4e7]">Smart categorization</div>
             <div className="mt-0.5 text-[12px] text-[#71717a]">
-              With an Anthropic API key, Categorize sorts your library into shelves using each skill's
-              description. Without it, only repo structure and name families are used. Stored in the
-              app's config; classifying a whole library costs a few cents.
+              Categorize sorts your library into shelves from each skill's description. Without a key,
+              only repo structure and name families are used. Keys can also come from the hub's
+              environment (ANTHROPIC_API_KEY / OPENROUTER_API_KEY). A whole library costs cents.
             </div>
-            <ApiKeyField
-              value={config?.anthropicApiKey ?? ''}
-              disabled={busy || !config}
-              onSave={(value) =>
-                config && apply(value ? { ...config, anthropicApiKey: value } : { ...config, anthropicApiKey: undefined })
-              }
-            />
+            <div className="mt-3 flex gap-2">
+              {(['anthropic', 'openrouter'] as const).map((provider) => {
+                const active = (config?.categorizerProvider ?? (config?.openRouterApiKey ? 'openrouter' : 'anthropic')) === provider
+                return (
+                  <button
+                    key={provider}
+                    type="button"
+                    disabled={busy || !config}
+                    onClick={() => config && apply({ ...config, categorizerProvider: provider })}
+                    className={`h-8 rounded-[9px] border px-3 text-[12.5px] font-medium transition ${
+                      active
+                        ? 'border-[#f97316] bg-[#1a1109] text-[#fb923c]'
+                        : 'border-[#27272a] bg-[#0c0c0e] text-[#a1a1aa] hover:border-[#3a3a42]'
+                    }`}
+                  >
+                    {provider === 'anthropic' ? 'Anthropic' : 'OpenRouter'}
+                  </button>
+                )
+              })}
+            </div>
+            {(config?.categorizerProvider ?? (config?.openRouterApiKey ? 'openrouter' : 'anthropic')) === 'openrouter' ? (
+              <>
+                <ApiKeyField
+                  value={config?.openRouterApiKey ?? ''}
+                  disabled={busy || !config}
+                  placeholder="sk-or-v1-…"
+                  onSave={(value) =>
+                    config && apply(value ? { ...config, openRouterApiKey: value } : { ...config, openRouterApiKey: undefined })
+                  }
+                />
+                <ModelField
+                  value={config?.openRouterModel ?? ''}
+                  disabled={busy || !config}
+                  onSave={(value) =>
+                    config && apply(value ? { ...config, openRouterModel: value } : { ...config, openRouterModel: undefined })
+                  }
+                />
+              </>
+            ) : (
+              <ApiKeyField
+                value={config?.anthropicApiKey ?? ''}
+                disabled={busy || !config}
+                placeholder="sk-ant-…"
+                onSave={(value) =>
+                  config && apply(value ? { ...config, anthropicApiKey: value } : { ...config, anthropicApiKey: undefined })
+                }
+              />
+            )}
           </section>
 
           {error && <p className="mt-4 text-[12.5px] text-[#f87171]">{error}</p>}
@@ -216,13 +257,44 @@ function ToggleRow({
   )
 }
 
+function ModelField({ value, disabled, onSave }: { value: string; disabled: boolean; onSave: (value: string) => void }) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const dirty = draft.trim() !== value
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="anthropic/claude-haiku-4.5 (default)"
+        disabled={disabled}
+        className="h-9 flex-1 rounded-[9px] border border-[#27272a] bg-[#0c0c0e] px-3 font-mono text-[12.5px] text-[#e4e4e7] outline-none placeholder:text-[#52525b] focus:border-[#3a3a42] disabled:opacity-60"
+      />
+      <button
+        type="button"
+        onClick={() => onSave(draft.trim())}
+        disabled={disabled || !dirty}
+        className={`h-9 rounded-[9px] px-3 text-[12px] font-semibold transition ${
+          disabled || !dirty
+            ? 'cursor-not-allowed border border-[#27272a] bg-transparent text-[#52525b]'
+            : 'bg-[#f97316] text-white hover:bg-[#ea580c]'
+        }`}
+      >
+        Save model
+      </button>
+    </div>
+  )
+}
+
 function ApiKeyField({
   value,
   disabled,
+  placeholder,
   onSave,
 }: {
   value: string
   disabled: boolean
+  placeholder?: string
   onSave: (value: string) => void
 }) {
   const [draft, setDraft] = useState(value)
@@ -236,7 +308,7 @@ function ApiKeyField({
         type={reveal ? 'text' : 'password'}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
-        placeholder="sk-ant-…"
+        placeholder={placeholder ?? 'API key'}
         disabled={disabled}
         autoComplete="off"
         className="h-9 flex-1 rounded-[9px] border border-[#27272a] bg-[#0c0c0e] px-3 font-mono text-[12.5px] text-[#e4e4e7] outline-none placeholder:text-[#52525b] focus:border-[#3a3a42] disabled:opacity-60"

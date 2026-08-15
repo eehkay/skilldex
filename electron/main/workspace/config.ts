@@ -59,6 +59,15 @@ function normalize(value: unknown): WorkspaceConfig {
     ...(typeof input.anthropicApiKey === 'string' && input.anthropicApiKey.trim()
       ? { anthropicApiKey: input.anthropicApiKey.trim() }
       : {}),
+    ...(input.categorizerProvider === 'anthropic' || input.categorizerProvider === 'openrouter'
+      ? { categorizerProvider: input.categorizerProvider }
+      : {}),
+    ...(typeof input.openRouterApiKey === 'string' && input.openRouterApiKey.trim()
+      ? { openRouterApiKey: input.openRouterApiKey.trim() }
+      : {}),
+    ...(typeof input.openRouterModel === 'string' && input.openRouterModel.trim()
+      ? { openRouterModel: input.openRouterModel.trim() }
+      : {}),
     machines: Array.isArray(input.machines)
       ? input.machines.filter(
           (machine): machine is WorkspaceConfig['machines'][number] =>

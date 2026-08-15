@@ -152,8 +152,12 @@ export type WorkspaceConfig = {
    * gets symlinks into its own layout (e.g. codex → `~/.codex/skills`).
    */
   agents: SkillAgent[]
-  /** Anthropic API key for LLM categorization; absent → structural layer only. */
+  /** LLM categorization provider; keys may also come from env (ANTHROPIC_API_KEY / OPENROUTER_API_KEY). */
+  categorizerProvider?: 'anthropic' | 'openrouter'
   anthropicApiKey?: string
+  openRouterApiKey?: string
+  /** OpenRouter model id; defaults to anthropic/claude-haiku-4.5. */
+  openRouterModel?: string
 }
 
 export type SkillAgent = 'claude' | 'codex'
