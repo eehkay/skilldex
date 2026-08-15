@@ -22,4 +22,8 @@ COPY --from=build /build/out/agent ./agent
 ENV SKILLDEX_DATA_DIR=/data
 EXPOSE 8654
 VOLUME /data
-CMD ["node", "hub/server.js"]
+# The hub shares the tailscale sidecar's network namespace, but DNS config is
+# per-container — Docker's resolver can't see MagicDNS names like arch-tower.
+# Route DNS through Tailscale's resolver (reachable via the shared netns; it
+# forwards non-tailnet queries upstream).
+CMD ["sh", "-c", "echo 'nameserver 100.100.100.100' > /etc/resolv.conf; exec node hub/server.js"]
