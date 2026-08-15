@@ -19,6 +19,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import type { MachineRecord, MachineSnapshot, WorkspaceSnapshot } from './types'
 
 export type ExecResult = { stdout: string; stderr: string; code: number }
@@ -35,6 +36,15 @@ export type MachineManagerDeps = {
   execImpl?: ExecLike
   /** Persist SSH host keys here (container mode); default is ssh's own. */
   knownHostsFile?: string
+  /**
+   * This host's own name/user, for self-detection (injected in tests).
+   * A machine record matching both runs through local bash instead of SSH —
+   * SSH-to-self bypasses the Tailscale tunnel and would hit the keyless
+   * OpenSSH daemon, so a hub hosted on a dev machine manages that machine
+   * directly.
+   */
+  selfHost?: string
+  selfUser?: string
 }
 
 export type MachineInstallInput = {
@@ -76,7 +86,14 @@ export function createMachineManager({
   agentPath,
   execImpl = spawnExec,
   knownHostsFile,
+  selfHost = os.hostname(),
+  selfUser = safeUsername(),
 }: MachineManagerDeps): MachineManager {
+  /** Does this record point at the very host we're running on, as our user? */
+  function isSelf(machine: MachineRecord): boolean {
+    const host = machine.host.split('.')[0].toLowerCase()
+    return host === selfHost.split('.')[0].toLowerCase() && machine.user === selfUser
+  }
   // Hosts whose remote agent hash we've already confirmed this process.
   // Keyed by login target, not display name: renaming a machine keeps the
   // confirmation, while pointing a name at a new host forces a re-probe.
@@ -100,6 +117,8 @@ export function createMachineManager({
     remoteCommand: string,
     opts: { input?: string; timeoutMs: number },
   ): Promise<ExecResult> {
+    // Managing the host we run on: same commands, local bash, no SSH.
+    if (isSelf(machine)) return execImpl('bash', ['-c', remoteCommand], opts)
     return execImpl('ssh', sshArgs(machine, remoteCommand), opts)
   }
 
@@ -182,6 +201,15 @@ export function createMachineManager({
     skillOp(machine, op, id) {
       return agentCall<WorkspaceSnapshot>(machine, op, { input: { id }, timeoutMs: SNAPSHOT_TIMEOUT })
     },
+  }
+}
+
+/** os.userInfo() throws on some containers without a passwd entry. */
+function safeUsername(): string {
+  try {
+    return os.userInfo().username
+  } catch {
+    return process.env.USER ?? ''
   }
 }
 

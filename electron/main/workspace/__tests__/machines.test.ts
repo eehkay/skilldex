@@ -117,6 +117,32 @@ describe('machine manager', () => {
     expect(snapshot.skills[0]).toEqual({ name: 'installed' })
   })
 
+  it('runs through local bash instead of ssh when the machine is this host', async () => {
+    const seen: Array<{ cmd: string; args: string[] }> = []
+    const exec: ExecLike = async (cmd, args) => {
+      seen.push({ cmd, args })
+      const remote = args[args.length - 1]
+      if (remote.includes('sha256sum')) return { stdout: 'missing', stderr: '', code: 0 }
+      if (remote.includes('cat >')) return { stdout: '', stderr: '', code: 0 }
+      return { stdout: JSON.stringify({ ok: true }), stderr: '', code: 0 }
+    }
+    const manager = createMachineManager({
+      agentPath,
+      execImpl: exec,
+      selfHost: 'arch-dev.taila7ae3.ts.net',
+      selfUser: 'kellogg',
+    })
+
+    // Same host + same user → local bash, no ssh.
+    await manager.ping({ name: 'dev', host: 'arch-dev', user: 'kellogg' })
+    expect(seen.every((call) => call.cmd === 'bash')).toBe(true)
+
+    // Same host but a different user is NOT self — must go over ssh.
+    seen.length = 0
+    await manager.ping({ name: 'dev-root', host: 'arch-dev', user: 'someone-else' }).catch(() => {})
+    expect(seen[0]?.cmd).toBe('ssh')
+  })
+
   it('wraps remote commands in bash -c for fish-shell machines', async () => {
     const remote = fakeMachine()
     const manager = createMachineManager({ agentPath, execImpl: remote.exec })
