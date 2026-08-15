@@ -19,7 +19,9 @@ import type {
   MachineRecord,
   MachineSnapshot,
   RepoCatalog,
+  SetSyndicationInput,
   SkillFile,
+  SyndicationResult,
   WorkspaceConfig,
   WorkspaceSnapshot,
 } from './skills'
@@ -78,5 +80,7 @@ export function createHttpBridge(): WorkspaceBridge {
       call<MachineSnapshot>('POST', 'machine-install', { name, input }),
     machineSkillOp: (name: string, op: 'enable' | 'disable' | 'remove', id: string) =>
       call<MachineSnapshot>('POST', 'machine-skill-op', { name, op, id }),
+    setSyndication: (input: SetSyndicationInput) =>
+      call<SyndicationResult>('POST', 'set-syndication', { input }),
   }
 }

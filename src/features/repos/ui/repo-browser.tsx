@@ -145,7 +145,7 @@ export function RepoBrowser({
                       }`}
                     >
                       {installed ? <Check className="size-3.5" /> : <Download className="size-3.5" />}
-                      {installed ? 'Installed' : 'Install'}
+                      {installed ? 'In library' : 'Import'}
                     </button>
                   </div>
                   <p className="line-clamp-2 min-h-[38px] text-[12.5px] leading-relaxed text-[#a1a1aa]">

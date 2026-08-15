@@ -32,6 +32,27 @@ export type SkillRecord = {
   projects: string[]
   /** Upstream provenance, when the skill's manifest records where it came from. */
   origin?: SkillOrigin
+  /** Library metadata (import provenance + syndication), for library-managed skills. */
+  library?: LibrarySkillMeta
+}
+
+/** Where a library skill is syndicated to. */
+export type SyndicationTarget = {
+  /** Machine name (from WorkspaceConfig.machines). */
+  machine: string
+  scope: 'global' | 'project'
+  projectName?: string
+}
+
+/** A library entry: where a skill was imported from and where it goes. */
+export type LibrarySkillMeta = {
+  /** `owner/repo` slug the skill was imported from. */
+  repo: string
+  /** Directory path within the repo ('' for a root-level skill). */
+  path: string
+  /** Pinned ref (commit sha when available) the library copy was taken at. */
+  ref: string
+  targets: SyndicationTarget[]
 }
 
 export type SkillFile = {
@@ -161,6 +182,8 @@ export type RepoCatalog = {
   url: string
   /** The branch the catalog was scanned at. */
   ref: string
+  /** Exact commit behind `ref` at scan time; imports pin to this. */
+  commitSha?: string
   skills: RepoSkill[]
   /**
    * When the repo contains no skills but its README links to other GitHub

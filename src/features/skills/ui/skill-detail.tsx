@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil } from 'lucide-react'
-import { scopePillClass, type Skill, type SkillFile } from '../model/skills'
+import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Server } from 'lucide-react'
+import { scopePillClass, type MachineSnapshot, type SetSyndicationInput, type Skill, type SkillFile } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
 
 type SkillDetailProps = {
   skill: Skill
+  /** Configured machines, for the syndication panel on library skills. */
+  machines: MachineSnapshot[]
   getReadme: (id: string) => Promise<string | null>
   listFiles: (id: string) => Promise<SkillFile[] | null>
   reveal: (id: string) => Promise<boolean>
   onToggle: () => void
   onToggleFavourite: () => void
   onRemove: () => void
+  onSetSyndication: (input: SetSyndicationInput) => Promise<void>
   onBack: () => void
 }
 
@@ -23,7 +26,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function SkillDetail({ skill, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onBack }: SkillDetailProps) {
+export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onBack }: SkillDetailProps) {
   const [tab, setTab] = useState<Tab>('instructions')
   const [readme, setReadme] = useState<string | null>(null)
   const [files, setFiles] = useState<SkillFile[] | null>(null)
@@ -222,6 +225,10 @@ export function SkillDetail({ skill, getReadme, listFiles, reveal, onToggle, onT
           </>
         )}
 
+        {skill.library && machines.length > 0 && (
+          <SyndicationPanel skill={skill} machines={machines} onSetSyndication={onSetSyndication} />
+        )}
+
         <button
           type="button"
           onClick={() => void reveal(skill.id)}
@@ -246,6 +253,7 @@ export function SkillDetail({ skill, getReadme, listFiles, reveal, onToggle, onT
       {confirmingRemove && (
         <ConfirmRemove
           name={skill.name}
+          machineCount={skill.library?.targets.length ?? 0}
           onCancel={() => setConfirmingRemove(false)}
           onConfirm={() => {
             setConfirmingRemove(false)
@@ -257,7 +265,83 @@ export function SkillDetail({ skill, getReadme, listFiles, reveal, onToggle, onT
   )
 }
 
-function ConfirmRemove({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
+/**
+ * Per-machine syndication for a library skill: checking a machine installs
+ * the library's pinned version there; unchecking uninstalls from just that
+ * machine (global scope — project placement happens via the install dialog).
+ */
+function SyndicationPanel({
+  skill,
+  machines,
+  onSetSyndication,
+}: {
+  skill: Skill
+  machines: MachineSnapshot[]
+  onSetSyndication: (input: SetSyndicationInput) => Promise<void>
+}) {
+  const [pending, setPending] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const targets = skill.library?.targets ?? []
+
+  const toggle = async (machineName: string, enabled: boolean) => {
+    setPending(machineName)
+    setError(null)
+    try {
+      await onSetSyndication({ skillId: skill.id, machine: machineName, enabled, scope: 'global' })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setPending(null)
+    }
+  }
+
+  return (
+    <>
+      <div className="mb-2.5 mt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#52525b]">
+        Machines
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {machines.map((entry) => {
+          const name = entry.machine.name
+          const syndicated = targets.some((target) => target.machine === name && target.scope === 'global')
+          const busy = pending !== null
+          return (
+            <label
+              key={name}
+              className={`flex items-center gap-2.5 rounded-[9px] border border-[#1c1c20] bg-[#0c0c0e] px-3 py-2 ${
+                busy ? 'opacity-70' : 'cursor-pointer hover:border-[#2e2e34]'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={syndicated}
+                disabled={busy}
+                onChange={() => void toggle(name, !syndicated)}
+                className="size-3.5 accent-[#f97316]"
+              />
+              <Server className="size-3.5 shrink-0 text-[#52525b]" />
+              <span className="flex-1 truncate text-[12.5px] text-[#e4e4e7]">{name}</span>
+              {pending === name && <Loader2 className="size-3.5 animate-spin text-[#71717a]" />}
+            </label>
+          )
+        })}
+      </div>
+      {error && <p className="mt-2 text-[12px] text-[#f87171]">{error}</p>}
+    </>
+  )
+}
+
+function ConfirmRemove({
+  name,
+  machineCount,
+  onConfirm,
+  onCancel,
+}: {
+  name: string
+  machineCount: number
+  onConfirm: () => void
+  onCancel: () => void
+}) {
   return (
     <div
       onClick={onCancel}
@@ -270,7 +354,11 @@ function ConfirmRemove({ name, onConfirm, onCancel }: { name: string; onConfirm:
         <div className="px-6 pt-5">
           <h2 className="text-lg font-semibold text-[#fafafa]">Uninstall “{name}”?</h2>
           <p className="mt-1.5 text-[13px] leading-relaxed text-[#a1a1aa]">
-            This deletes the skill directory from disk. This cannot be undone.
+            {machineCount > 0
+              ? `This uninstalls the skill from ${machineCount} syndicated ${
+                  machineCount === 1 ? 'machine' : 'machines'
+                } and deletes it from the library. This cannot be undone.`
+              : 'This deletes the skill directory from disk. This cannot be undone.'}
           </p>
         </div>
         <div className="mt-5 flex justify-end gap-2.5 border-t border-[#1c1c20] bg-[#0c0c0e] px-6 py-4">

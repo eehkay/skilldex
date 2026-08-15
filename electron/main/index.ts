@@ -3,7 +3,8 @@ import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createConfigStore } from './workspace/config'
-import { createSkillWorkspace } from './workspace/skill-workspace'
+import { createLibraryStore } from './workspace/library-store'
+import { createSkillWorkspace, type SetSyndicationInput } from './workspace/skill-workspace'
 import type {
   CreateSkillInput,
   InstallRepoSkillInput,
@@ -54,6 +55,7 @@ app.whenReady().then(() => {
     // Machine management from the desktop app works when the agent bundle is
     // built (dev checkouts); packaged builds without it degrade gracefully.
     agentPath: path.join(app.getAppPath(), 'out', 'agent', 'skilldex-agent.js'),
+    libraryStore: createLibraryStore(path.join(app.getPath('userData'), 'library.json')),
   })
 
   ipcMain.handle('skilldex:get-config', () => workspace.getConfig())
@@ -100,6 +102,9 @@ app.whenReady().then(() => {
     'skilldex:machine-skill-op',
     (_event, name: string, op: 'enable' | 'disable' | 'remove', id: string) =>
       workspace.machineSkillOp(name, op, id),
+  )
+  ipcMain.handle('skilldex:set-syndication', (_event, input: SetSyndicationInput) =>
+    workspace.setSyndication(input),
   )
 
   createMainWindow()

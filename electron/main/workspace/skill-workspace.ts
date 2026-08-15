@@ -11,6 +11,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { syncAgentLinks } from './agent-links'
 import type { ConfigStore } from './config'
+import { createMemoryLibraryStore, type LibraryStore } from './library-store'
 import { favouriteKeyFor } from './favourite-key'
 import {
   listSkillFiles,
@@ -37,12 +38,14 @@ import { createMachineManager, type ExecLike, type MachineManager } from './mach
 import type {
   CreateSkillInput,
   InstallRepoSkillInput,
+  LibrarySkillMeta,
   MachineRecord,
   MachineSnapshot,
   RepoCatalog,
   SkillFile,
   SkillRecord,
   SourceRecord,
+  SyndicationTarget,
   WorkspaceConfig,
   WorkspaceSnapshot,
 } from './types'
@@ -58,6 +61,23 @@ export type SkillWorkspaceDeps = {
   execImpl?: ExecLike
   /** Persist SSH host keys here (container mode). */
   knownHostsFile?: string
+  /** Library ledger (import provenance + syndication); in-memory when absent. */
+  libraryStore?: LibraryStore
+}
+
+/** Result of a syndication change: the library view plus the machine's new state. */
+export type SyndicationResult = {
+  workspace: WorkspaceSnapshot
+  machine: MachineSnapshot
+}
+
+export type SetSyndicationInput = {
+  /** Library skill id (its canonical path). */
+  skillId: string
+  machine: string
+  enabled: boolean
+  scope: 'global' | 'project'
+  projectName?: string
 }
 
 export type SkillWorkspace = {
@@ -98,10 +118,12 @@ export type SkillWorkspace = {
   removeMachine(name: string): Promise<MachineSnapshot[]>
   /** Re-scan one machine. */
   refreshMachine(name: string): Promise<MachineSnapshot>
-  /** Install a catalog skill onto a machine. Returns that machine's fresh snapshot. */
+  /** Install a catalog skill onto a machine (imports into the library first). */
   installOnMachine(name: string, input: InstallRepoSkillInput): Promise<MachineSnapshot>
   /** Enable/disable/remove a skill on a machine. Returns its fresh snapshot. */
   machineSkillOp(name: string, op: 'enable' | 'disable' | 'remove', id: string): Promise<MachineSnapshot>
+  /** Syndicate a library skill to a machine (or uninstall it from one). */
+  setSyndication(input: SetSyndicationInput): Promise<SyndicationResult>
 }
 
 /** Management is only meaningful for skills we own on disk, never plugin skills. */
@@ -117,6 +139,7 @@ export function createSkillWorkspace({
   agentPath,
   execImpl,
   knownHostsFile,
+  libraryStore = createMemoryLibraryStore(),
 }: SkillWorkspaceDeps): SkillWorkspace {
   const machineManager: MachineManager | null = agentPath
     ? createMachineManager({ agentPath, execImpl, knownHostsFile })
@@ -175,6 +198,63 @@ export function createSkillWorkspace({
     )
   }
 
+  /**
+   * Ensure a catalog skill exists in the library: the canonical copy under
+   * `~/.claude/skills` (downloaded at the catalog's current commit if
+   * missing) plus a ledger entry pinned to that version. Idempotent — an
+   * existing copy keeps its pinned ref. Only skills discovered in user-added
+   * repos are accepted.
+   */
+  async function ensureLibraryCopy(
+    config: WorkspaceConfig,
+    input: { repo: string; skillId: string },
+  ): Promise<{ dirName: string; meta: LibrarySkillMeta }> {
+    if (!config.skillRepos.includes(input.repo)) throw new Error('Unknown skill repo.')
+    const scan = await scanRepo(input.repo)
+    const skill = scan.catalog.skills.find((entry) => entry.id === input.skillId)
+    const files = skill && scan.filesBySkill.get(skill.id)
+    if (!skill || !files) throw new Error('Unknown skill in this repo.')
+
+    const dirName = skill.path ? path.posix.basename(skill.path) : slugify(skill.name)
+    const pinnedRef = scan.catalog.commitSha ?? scan.catalog.ref
+    const root = path.join(homeDir, '.claude', 'skills')
+    const dest = path.join(root, dirName)
+
+    const exists =
+      (await fs.access(dest).then(() => true).catch(() => false)) ||
+      (await fs.access(path.join(root, '.disabled', dirName)).then(() => true).catch(() => false))
+    if (!exists) {
+      await fs.mkdir(root, { recursive: true })
+      await downloadRepoSkill({
+        slug: scan.catalog.slug,
+        ref: pinnedRef,
+        dir: skill.path,
+        files,
+        dest,
+        fetchImpl,
+      })
+      // Record provenance the same way the skills CLI does, so the detail
+      // view's Source panel lights up. Best-effort.
+      await writeSkillLockEntry(homeDir, dirName, {
+        source: scan.catalog.slug,
+        sourceType: 'github',
+        sourceUrl: `https://github.com/${scan.catalog.slug}.git`,
+        skillPath: skill.path ? `${skill.path}/SKILL.md` : 'SKILL.md',
+      }).catch(() => {})
+    }
+
+    const existing = (await libraryStore.load())[dirName]
+    const meta: LibrarySkillMeta = {
+      repo: input.repo,
+      path: skill.path,
+      // An existing library copy keeps the version it was imported at.
+      ref: existing?.ref ?? pinnedRef,
+      targets: existing?.targets ?? [],
+    }
+    await libraryStore.set(dirName, meta)
+    return { dirName, meta }
+  }
+
   /** Skills root for a create/install target — global, or one configured project. */
   async function resolveTargetRoot(
     config: WorkspaceConfig,
@@ -188,6 +268,25 @@ export function createSkillWorkspace({
       return path.join(match, '.claude', 'skills')
     }
     return path.join(homeDir, '.claude', 'skills')
+  }
+
+  /** Import into the library; a project-scoped install adds a project copy too. */
+  async function importToLibrary(config: WorkspaceConfig, input: InstallRepoSkillInput): Promise<void> {
+    const { dirName, meta } = await ensureLibraryCopy(config, input)
+    if (input.scope !== 'project') return
+    const scan = await scanRepo(input.repo)
+    const files = scan.filesBySkill.get(input.skillId)
+    if (!files) throw new Error('Unknown skill in this repo.')
+    const root = await resolveTargetRoot(config, 'project', input.projectName)
+    await fs.mkdir(root, { recursive: true })
+    await downloadRepoSkill({
+      slug: meta.repo,
+      ref: meta.ref,
+      dir: meta.path,
+      files,
+      dest: path.join(root, dirName),
+      fetchImpl,
+    })
   }
 
   async function resolveKnown(id: string): Promise<SkillRecord | null> {
@@ -233,9 +332,13 @@ export function createSkillWorkspace({
     collected.push(...projectScan.skills)
 
     const favourites = new Set(config.favourites)
+    const library = await libraryStore.load()
     const skills = dedupe(collected).map((skill) => ({
       ...skill,
       isFavourite: favourites.has(favouriteKeyFor(skill.realPath)),
+      // Library metadata attaches to canonical (Personal) copies by folder name.
+      library:
+        skill.sourceKind === 'Personal' ? library[path.basename(skill.realPath)] : undefined,
     }))
 
     known.clear()
@@ -298,7 +401,39 @@ export function createSkillWorkspace({
     async removeSkill(id) {
       const skill = await resolveKnown(id)
       assertManageable(skill)
+
+      // Removing a library skill is a full uninstall: pull it off every
+      // syndicated machine first. Any machine failure aborts before the local
+      // copy is touched, so a retry can finish the job.
+      const dirName = path.basename(skill.realPath)
+      const meta = skill.sourceKind === 'Personal' ? (await libraryStore.load())[dirName] : undefined
+      if (meta && meta.targets.length > 0) {
+        const config = await configStore.load()
+        const failures: string[] = []
+        let remaining = meta.targets
+        for (const target of meta.targets) {
+          const machine = config.machines.find((entry) => entry.name === target.machine)
+          if (machine) {
+            try {
+              await machines().uninstall(machine, {
+                dirName,
+                scope: target.scope,
+                projectName: target.projectName,
+              })
+            } catch (cause) {
+              failures.push(`${target.machine}: ${cause instanceof Error ? cause.message : String(cause)}`)
+              continue
+            }
+          }
+          remaining = withoutTarget(remaining, target)
+        }
+        await libraryStore.set(dirName, { ...meta, targets: remaining })
+        if (failures.length > 0)
+          throw new Error(`Could not uninstall from every machine — ${failures.join('; ')}. Local copy kept; try again.`)
+      }
+
       await removeSkillDir(skill.path)
+      if (meta) await libraryStore.set(dirName, null)
       // A deleted skill can't stay favourited — prune its key so the set never
       // accumulates dead entries.
       const config = await configStore.load()
@@ -372,39 +507,7 @@ export function createSkillWorkspace({
 
     async installRepoSkill(input) {
       const config = await configStore.load()
-      // Installs are only allowed from repos the user has added, and only for
-      // skills we discovered ourselves — the renderer can't name arbitrary
-      // URLs or paths.
-      if (!config.skillRepos.includes(input.repo)) throw new Error('Unknown skill repo.')
-      const scan = await scanRepo(input.repo)
-      const skill = scan.catalog.skills.find((entry) => entry.id === input.skillId)
-      const files = skill && scan.filesBySkill.get(skill.id)
-      if (!skill || !files) throw new Error('Unknown skill in this repo.')
-
-      const root = await resolveTargetRoot(config, input.scope, input.projectName)
-      const dirName = skill.path ? path.posix.basename(skill.path) : slugify(skill.name)
-      await fs.mkdir(root, { recursive: true })
-      await downloadRepoSkill({
-        slug: scan.catalog.slug,
-        ref: scan.catalog.ref,
-        dir: skill.path,
-        files,
-        dest: path.join(root, dirName),
-        fetchImpl,
-      })
-
-      // Record provenance for global installs the same way the skills CLI does
-      // (~/.agents/.skill-lock.json), so the detail view's Source panel lights
-      // up. Best-effort: a lock write failure never fails the install.
-      if (input.scope === 'global') {
-        await writeSkillLockEntry(homeDir, dirName, {
-          source: scan.catalog.slug,
-          sourceType: 'github',
-          sourceUrl: `https://github.com/${scan.catalog.slug}.git`,
-          skillPath: skill.path ? `${skill.path}/SKILL.md` : 'SKILL.md',
-        }).catch(() => {})
-      }
-
+      await importToLibrary(config, input)
       return buildSnapshot(config)
     },
 
@@ -447,19 +550,20 @@ export function createSkillWorkspace({
 
     async installOnMachine(name, input) {
       const config = await configStore.load()
-      // Same trust model as local installs: only skills we discovered
-      // ourselves, from repos the user added.
-      if (!config.skillRepos.includes(input.repo)) throw new Error('Unknown skill repo.')
-      const scan = await scanRepo(input.repo)
-      if (!scan.catalog.skills.some((skill) => skill.id === input.skillId))
-        throw new Error('Unknown skill in this repo.')
-
+      // Machine installs route through the library: import (pinning the
+      // version) first, then push that exact version to the machine.
+      const { dirName, meta } = await ensureLibraryCopy(config, input)
       const machine = await findMachine(name)
       const snapshot = await machines().install(machine, {
-        repo: input.repo,
+        repo: meta.repo,
         skillId: input.skillId,
         scope: input.scope,
         projectName: input.projectName,
+        ref: meta.ref,
+      })
+      await libraryStore.set(dirName, {
+        ...meta,
+        targets: withTarget(meta.targets, { machine: name, scope: input.scope, projectName: input.projectName }),
       })
       return { machine, snapshot }
     },
@@ -469,7 +573,61 @@ export function createSkillWorkspace({
       const snapshot = await machines().skillOp(machine, op, id)
       return { machine, snapshot }
     },
+
+    async setSyndication(input) {
+      const skill = await resolveKnown(input.skillId)
+      if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
+      const dirName = path.basename(skill.realPath)
+      const meta = (await libraryStore.load())[dirName]
+      if (!meta) throw new Error('This skill was not imported from a repo — syndication needs provenance.')
+
+      const config = await configStore.load()
+      const machine = await findMachine(input.machine)
+      const target: SyndicationTarget = {
+        machine: input.machine,
+        scope: input.scope,
+        projectName: input.projectName,
+      }
+
+      let snapshot: WorkspaceSnapshot
+      if (input.enabled) {
+        snapshot = await machines().install(machine, {
+          repo: meta.repo,
+          skillId: `${meta.repo}:${meta.path}`,
+          scope: input.scope,
+          projectName: input.projectName,
+          ref: meta.ref,
+        })
+        await libraryStore.set(dirName, { ...meta, targets: withTarget(meta.targets, target) })
+      } else {
+        snapshot = await machines().uninstall(machine, {
+          dirName,
+          scope: input.scope,
+          projectName: input.projectName,
+        })
+        await libraryStore.set(dirName, { ...meta, targets: withoutTarget(meta.targets, target) })
+      }
+
+      return {
+        workspace: await buildSnapshot(config),
+        machine: { machine, snapshot },
+      }
+    },
   }
+}
+
+function targetKey(target: SyndicationTarget): string {
+  return `${target.machine} ${target.scope} ${target.projectName ?? ''}`
+}
+
+function withTarget(targets: SyndicationTarget[], target: SyndicationTarget): SyndicationTarget[] {
+  return targets.some((existing) => targetKey(existing) === targetKey(target))
+    ? targets
+    : [...targets, target]
+}
+
+function withoutTarget(targets: SyndicationTarget[], target: SyndicationTarget): SyndicationTarget[] {
+  return targets.filter((existing) => targetKey(existing) !== targetKey(target))
 }
 
 /** Merge one skill's provenance entry into `~/.agents/.skill-lock.json`. */

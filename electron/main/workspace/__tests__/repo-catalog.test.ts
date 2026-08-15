@@ -249,13 +249,17 @@ describe('SkillWorkspace repo integration', () => {
     ).rejects.toThrow('Unknown skill in this repo.')
   })
 
-  it('rejects duplicate installs instead of overwriting', async () => {
+  it('treats a re-import as a no-op, never overwriting the library copy', async () => {
     const ws = workspace(skillsRepoRoutes())
     await ws.addSkillRepo(SLUG)
     await ws.installRepoSkill({ repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
-    await expect(
-      ws.installRepoSkill({ repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' }),
-    ).rejects.toThrow(/already exists/)
+    const marker = path.join(tmp, '.claude', 'skills', 'tdd', 'local-edit.txt')
+    await fs.writeFile(marker, 'local change')
+
+    const snapshot = await ws.installRepoSkill({ repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+    expect(snapshot.skills.filter((s) => s.name === 'tdd')).toHaveLength(1)
+    // The existing copy (including local edits) is untouched.
+    await expect(fs.readFile(marker, 'utf8')).resolves.toBe('local change')
   })
 
   it('lists per-repo errors inline instead of failing the whole list', async () => {

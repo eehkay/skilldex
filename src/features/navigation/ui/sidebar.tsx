@@ -27,7 +27,7 @@ type SidebarProps = {
 }
 
 const NAV: Array<{ key: FilterKey; label: string; icon: ComponentType<{ className?: string }> }> = [
-  { key: 'all', label: 'All Skills', icon: LayoutGrid },
+  { key: 'all', label: 'Library', icon: LayoutGrid },
   { key: 'favourites', label: 'Favourites', icon: Heart },
   { key: 'global', label: 'Global', icon: Globe },
   { key: 'plugin', label: 'Plugins', icon: Blocks },

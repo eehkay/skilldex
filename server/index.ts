@@ -20,6 +20,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { createConfigStore } from '../electron/main/workspace/config'
+import { createLibraryStore } from '../electron/main/workspace/library-store'
 import { createSkillWorkspace } from '../electron/main/workspace/skill-workspace'
 import { createApiRoutes, handleApi } from './router'
 import { serveStatic } from './static'
@@ -45,6 +46,7 @@ async function main(): Promise<void> {
     // The bundled machine agent ships next to the server in the image.
     agentPath: process.env.SKILLDEX_AGENT_PATH || path.join(__dirname, '..', 'agent', 'skilldex-agent.js'),
     knownHostsFile: path.join(dataDir, 'known_hosts'),
+    libraryStore: createLibraryStore(path.join(dataDir, 'library.json')),
   })
   const routes = createApiRoutes(workspace)
 

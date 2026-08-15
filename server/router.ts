@@ -67,6 +67,7 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
       return workspace.installOnMachine(body.name, body.input as never)
     }],
+    ['POST /api/set-syndication', async (_q, body) => workspace.setSyndication(body.input as never)],
     ['POST /api/machine-skill-op', async (_q, body) => {
       const { name, op } = body
       if (typeof name !== 'string') throw new Error('Missing machine name.')

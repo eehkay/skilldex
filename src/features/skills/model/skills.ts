@@ -15,6 +15,19 @@ export type SkillOrigin = {
   webUrl: string
 }
 
+export type SyndicationTarget = {
+  machine: string
+  scope: 'global' | 'project'
+  projectName?: string
+}
+
+export type LibrarySkillMeta = {
+  repo: string
+  path: string
+  ref: string
+  targets: SyndicationTarget[]
+}
+
 export type SkillRecord = {
   id: string
   name: string
@@ -30,6 +43,7 @@ export type SkillRecord = {
   fileCount: number
   projects: string[]
   origin?: SkillOrigin
+  library?: LibrarySkillMeta
 }
 
 export type SkillFile = {
@@ -126,6 +140,19 @@ export type MachineSnapshot = {
   machine: MachineRecord
   snapshot: WorkspaceSnapshot | null
   error?: string
+}
+
+export type SetSyndicationInput = {
+  skillId: string
+  machine: string
+  enabled: boolean
+  scope: 'global' | 'project'
+  projectName?: string
+}
+
+export type SyndicationResult = {
+  workspace: WorkspaceSnapshot
+  machine: MachineSnapshot
 }
 
 /**

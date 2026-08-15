@@ -8,6 +8,7 @@ import {
   type MachineRecord,
   type MachineSnapshot,
   type RepoCatalog,
+  type SetSyndicationInput,
   type Skill,
   type SkillFile,
   type WorkspaceConfig,
@@ -44,6 +45,7 @@ export type WorkspaceState = {
   refreshMachine: (name: string) => Promise<void>
   installOnMachine: (name: string, input: InstallRepoSkillInput) => Promise<void>
   machineSkillOp: (name: string, op: 'enable' | 'disable' | 'remove', id: string) => Promise<void>
+  setSyndication: (input: SetSyndicationInput) => Promise<void>
 }
 
 // Electron injects window.skilldex via preload; served by the hub instead,
@@ -218,6 +220,23 @@ export function useWorkspace(): WorkspaceState {
     [patchMachine],
   )
 
+  const setSyndication = useCallback(async (input: SetSyndicationInput) => {
+    setMachinesLoading(true)
+    try {
+      const result = await bridge()?.setSyndication(input)
+      if (result) {
+        setSnapshot(result.workspace)
+        setMachineSnapshots((current) =>
+          current.map((entry) =>
+            entry.machine.name === result.machine.machine.name ? result.machine : entry,
+          ),
+        )
+      }
+    } finally {
+      setMachinesLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void rescan()
     // Repo catalogs and machine snapshots load independently of the local
@@ -266,5 +285,6 @@ export function useWorkspace(): WorkspaceState {
     refreshMachine,
     installOnMachine,
     machineSkillOp,
+    setSyndication,
   }
 }

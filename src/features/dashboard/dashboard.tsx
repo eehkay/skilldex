@@ -16,8 +16,8 @@ import { SkillDetail } from '@/features/skills/ui/skill-detail'
 
 const HEADINGS: Record<FilterKey, { title: string; subtitle: string; pill: string }> = {
   all: {
-    title: 'All Skills',
-    subtitle: 'Every agent skill available on this machine and in your open projects.',
+    title: 'Library',
+    subtitle: 'Your skill collection — everything installed here, imported from repos, or in your open projects.',
     pill: 'All sources',
   },
   favourites: {
@@ -87,6 +87,7 @@ export function Dashboard() {
     refreshMachine,
     installOnMachine,
     machineSkillOp,
+    setSyndication,
   } = useWorkspace()
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
@@ -237,12 +238,14 @@ export function Dashboard() {
         ) : selected ? (
           <SkillDetail
             skill={selected}
+            machines={machineSnapshots}
             getReadme={getReadme}
             listFiles={listFiles}
             reveal={reveal}
             onToggle={() => void toggleSkill(selected)}
             onToggleFavourite={() => favourite(selected)}
             onRemove={() => void removeSkill(selected.id)}
+            onSetSyndication={setSyndication}
             onBack={() => setSelectedId(null)}
           />
         ) : (

@@ -42,6 +42,15 @@ export type MachineInstallInput = {
   skillId: string
   scope: 'global' | 'project'
   projectName?: string
+  /** Pinned ref (library version); the machine downloads exactly this. */
+  ref?: string
+}
+
+export type MachineUninstallInput = {
+  /** Skill folder name under the target scope's skills root. */
+  dirName: string
+  scope: 'global' | 'project'
+  projectName?: string
 }
 
 const AGENT_REMOTE = '~/.skilldex-agent.js'
@@ -55,6 +64,7 @@ export type MachineManager = {
   ping(machine: MachineRecord): Promise<void>
   snapshot(machine: MachineRecord): Promise<MachineSnapshot>
   install(machine: MachineRecord, input: MachineInstallInput): Promise<WorkspaceSnapshot>
+  uninstall(machine: MachineRecord, input: MachineUninstallInput): Promise<WorkspaceSnapshot>
   skillOp(machine: MachineRecord, op: 'enable' | 'disable' | 'remove', id: string): Promise<WorkspaceSnapshot>
 }
 
@@ -152,6 +162,10 @@ export function createMachineManager({
 
     install(machine, input) {
       return agentCall<WorkspaceSnapshot>(machine, 'install', { input, timeoutMs: INSTALL_TIMEOUT })
+    },
+
+    uninstall(machine, input) {
+      return agentCall<WorkspaceSnapshot>(machine, 'uninstall', { input, timeoutMs: SNAPSHOT_TIMEOUT })
     },
 
     skillOp(machine, op, id) {

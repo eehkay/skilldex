@@ -27,7 +27,7 @@ import {
   fetchRepoCatalog,
   type FetchLike,
 } from '../electron/main/workspace/repo-catalog'
-import { slugify } from '../electron/main/workspace/skill-manager'
+import { removeSkillDir, slugify } from '../electron/main/workspace/skill-manager'
 import { createSkillWorkspace, writeSkillLockEntry } from '../electron/main/workspace/skill-workspace'
 
 /** The desktop app's config path on this machine (Electron's userData layout). */
@@ -66,11 +66,12 @@ async function main(): Promise<void> {
         skillId: string
         scope: 'global' | 'project'
         projectName?: string
+        ref?: string
       }
       // The hub already validated the skill against its own catalog; the agent
-      // re-scans the repo itself so the download is always from the machine's
-      // network with fresh file lists (and never trusts pasted paths).
-      const scan = await fetchRepoCatalog({ slug: input.repo }, fetchImpl)
+      // re-scans the repo itself (at the hub's pinned ref, when given) so the
+      // download comes from the machine's own network with fresh file lists.
+      const scan = await fetchRepoCatalog({ slug: input.repo, ref: input.ref }, fetchImpl)
       const skill = scan.catalog.skills.find((entry) => entry.id === input.skillId)
       const files = skill && scan.filesBySkill.get(skill.id)
       if (!skill || !files) throw new Error(`Skill not found in ${input.repo}: ${input.skillId}`)
@@ -104,6 +105,41 @@ async function main(): Promise<void> {
           skillPath: skill.path ? `${skill.path}/SKILL.md` : 'SKILL.md',
         }).catch(() => {})
       }
+      emit(await workspace.getSnapshot())
+      return
+    }
+    case 'uninstall': {
+      const input = JSON.parse(await readStdin()) as {
+        dirName: string
+        scope: 'global' | 'project'
+        projectName?: string
+      }
+      // The folder name must be exactly one path segment — the agent never
+      // deletes anything a hub couldn't have installed.
+      if (path.basename(input.dirName) !== input.dirName || input.dirName.startsWith('.'))
+        throw new Error(`Invalid skill folder name: ${input.dirName}`)
+
+      let root: string
+      if (input.scope === 'project') {
+        const config = await configStore.load()
+        const dirs = await resolveProjectDirs(config.projectRoots)
+        const match = dirs.find((dir) => path.basename(dir) === input.projectName)
+        if (!match) throw new Error(`Unknown project on this machine: ${input.projectName ?? '(none)'}`)
+        root = path.join(match, '.claude', 'skills')
+      } else {
+        root = path.join(homeDir, '.claude', 'skills')
+      }
+
+      // The skill may be parked under .disabled/ — remove whichever exists.
+      let removed = false
+      for (const dir of [path.join(root, input.dirName), path.join(root, '.disabled', input.dirName)]) {
+        const present = await fs.access(dir).then(() => true).catch(() => false)
+        if (present) {
+          await removeSkillDir(dir)
+          removed = true
+        }
+      }
+      if (!removed) throw new Error(`Skill not found on this machine: ${input.dirName}`)
       emit(await workspace.getSnapshot())
       return
     }

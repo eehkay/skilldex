@@ -95,6 +95,10 @@ export function parseRepoInput(input: string): RepoRef | null {
 export async function fetchRepoCatalog(repo: RepoRef, fetchImpl: FetchLike): Promise<RepoScan> {
   const { slug } = repo
   const ref = repo.ref ?? (await fetchDefaultBranch(slug, fetchImpl))
+  // The exact commit behind the ref, so imports can be pinned and machines
+  // always download the same version the library holds. Best-effort: a
+  // failure falls back to the movable ref.
+  const commitSha = await fetchCommitSha(slug, ref, fetchImpl).catch(() => undefined)
   const tree = await fetchTree(slug, ref, fetchImpl)
 
   const blobs = tree.entries.filter((entry) => entry.type === 'blob')
@@ -139,12 +143,22 @@ export async function fetchRepoCatalog(repo: RepoRef, fetchImpl: FetchLike): Pro
       slug,
       url: `https://github.com/${slug}`,
       ref,
+      commitSha,
       skills,
       linkedRepos,
       truncated: tree.truncated || skillDirs.length > MAX_SKILLS,
     },
     filesBySkill,
   }
+}
+
+async function fetchCommitSha(slug: string, ref: string, fetchImpl: FetchLike): Promise<string | undefined> {
+  const data = (await apiGet(
+    `${API}/repos/${slug}/commits/${encodeURIComponent(ref)}`,
+    slug,
+    fetchImpl,
+  )) as { sha?: string }
+  return typeof data.sha === 'string' && /^[0-9a-f]{7,40}$/i.test(data.sha) ? data.sha : undefined
 }
 
 /**
