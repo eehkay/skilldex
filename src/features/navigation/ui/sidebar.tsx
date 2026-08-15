@@ -1,5 +1,5 @@
-import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Pencil, Plus, PowerOff, Search, Server, Settings } from 'lucide-react'
-import type { ComponentType } from 'react'
+import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Pencil, Plus, PowerOff, Search, Server, Settings, X } from 'lucide-react'
+import { useEffect, useRef, type ComponentType } from 'react'
 import { ACCENT_PALETTE, type MachineSnapshot, type ProjectRecord, type RepoCatalog } from '@/features/skills/model/skills'
 
 export type FilterKey = 'all' | 'favourites' | 'global' | 'plugin' | 'project' | 'disabled'
@@ -37,6 +37,21 @@ const NAV: Array<{ key: FilterKey; label: string; icon: ComponentType<{ classNam
 ]
 
 export function Sidebar({ active, counts, projects, repos, activeRepo, machines, activeMachine, query, onQuery, onFilter, onSelectRepo, onAddRepo, onSelectMachine, onAddMachine, onEditMachine, onOpenSettings }: SidebarProps) {
+  const searchInput = useRef<HTMLInputElement>(null)
+
+  // ⌘K / Ctrl+K focuses search from anywhere; Esc in the box clears and blurs.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        searchInput.current?.focus()
+        searchInput.current?.select()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   return (
     <aside className="flex w-[248px] shrink-0 flex-col border-r border-[#1c1c20] bg-[#0b0b0d] px-3 py-3.5">
       <div className="flex items-center gap-2.5 px-2 pb-3.5 pt-1.5">
@@ -49,14 +64,39 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, machines,
       <label className="relative mb-4 block">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#52525b]" />
         <input
+          ref={searchInput}
           value={query}
           onChange={(event) => onQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              onQuery('')
+              event.currentTarget.blur()
+            }
+          }}
           placeholder="Search skills…"
-          className="h-[34px] w-full rounded-[9px] border border-[#27272a] bg-[#111114] pl-[30px] pr-8 text-[13px] text-[#e4e4e7] outline-none placeholder:text-[#52525b] focus:border-[#3a3a42]"
+          aria-label="Search skills"
+          className={`h-[34px] w-full rounded-[9px] border bg-[#111114] pl-[30px] pr-8 text-[13px] text-[#e4e4e7] outline-none placeholder:text-[#52525b] focus:border-[#3a3a42] ${
+            query ? 'border-[#4a2a10]' : 'border-[#27272a]'
+          }`}
         />
-        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[5px] border border-[#27272a] bg-[#18181b] px-1.5 py-0.5 font-mono text-[10px] text-[#52525b]">
-          ⌘K
-        </span>
+        {query ? (
+          <button
+            type="button"
+            onClick={() => {
+              onQuery('')
+              searchInput.current?.focus()
+            }}
+            aria-label="Clear search"
+            className="absolute right-2 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-md text-[#71717a] transition hover:bg-[#1c1c20] hover:text-[#e4e4e7]"
+          >
+            <X className="size-3.5" />
+          </button>
+        ) : (
+          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[5px] border border-[#27272a] bg-[#18181b] px-1.5 py-0.5 font-mono text-[10px] text-[#52525b]">
+            ⌘K
+          </span>
+        )}
       </label>
 
       <div className="px-2 pb-2 text-[10.5px] font-semibold uppercase tracking-[0.09em] text-[#52525b]">Library</div>

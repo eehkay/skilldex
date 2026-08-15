@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FolderPlus, Loader2, Trash2, X } from 'lucide-react'
 import { tildify, type WorkspaceConfig } from '@/features/skills/model/skills'
 import { SkillToggle } from '@/features/skills/ui/skill-toggle'
@@ -155,6 +155,22 @@ export function SettingsDialog({ open, config, homeDir, onClose, onConfigure, on
             </div>
           </section>
 
+          <section className="mt-7">
+            <div className="text-[13px] font-semibold text-[#e4e4e7]">Smart categorization</div>
+            <div className="mt-0.5 text-[12px] text-[#71717a]">
+              With an Anthropic API key, Categorize sorts your library into shelves using each skill's
+              description. Without it, only repo structure and name families are used. Stored in the
+              app's config; classifying a whole library costs a few cents.
+            </div>
+            <ApiKeyField
+              value={config?.anthropicApiKey ?? ''}
+              disabled={busy || !config}
+              onSave={(value) =>
+                config && apply(value ? { ...config, anthropicApiKey: value } : { ...config, anthropicApiKey: undefined })
+              }
+            />
+          </section>
+
           {error && <p className="mt-4 text-[12.5px] text-[#f87171]">{error}</p>}
         </div>
 
@@ -196,6 +212,54 @@ function ToggleRow({
         <div className="mt-0.5 font-mono text-[11px] text-[#52525b]">{detail}</div>
       </div>
       <SkillToggle enabled={enabled} onToggle={disabled ? undefined : onToggle} disabled={disabled} />
+    </div>
+  )
+}
+
+function ApiKeyField({
+  value,
+  disabled,
+  onSave,
+}: {
+  value: string
+  disabled: boolean
+  onSave: (value: string) => void
+}) {
+  const [draft, setDraft] = useState(value)
+  const [reveal, setReveal] = useState(false)
+  useEffect(() => setDraft(value), [value])
+  const dirty = draft.trim() !== value
+
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <input
+        type={reveal ? 'text' : 'password'}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="sk-ant-…"
+        disabled={disabled}
+        autoComplete="off"
+        className="h-9 flex-1 rounded-[9px] border border-[#27272a] bg-[#0c0c0e] px-3 font-mono text-[12.5px] text-[#e4e4e7] outline-none placeholder:text-[#52525b] focus:border-[#3a3a42] disabled:opacity-60"
+      />
+      <button
+        type="button"
+        onClick={() => setReveal((current) => !current)}
+        className="h-9 rounded-[9px] border border-[#27272a] bg-[#18181b] px-3 text-[12px] text-[#a1a1aa] transition hover:border-[#3a3a42]"
+      >
+        {reveal ? 'Hide' : 'Show'}
+      </button>
+      <button
+        type="button"
+        onClick={() => onSave(draft.trim())}
+        disabled={disabled || !dirty}
+        className={`h-9 rounded-[9px] px-3 text-[12px] font-semibold transition ${
+          disabled || !dirty
+            ? 'cursor-not-allowed border border-[#27272a] bg-transparent text-[#52525b]'
+            : 'bg-[#f97316] text-white hover:bg-[#ea580c]'
+        }`}
+      >
+        {value && !draft.trim() ? 'Remove' : 'Save'}
+      </button>
     </div>
   )
 }

@@ -1,14 +1,20 @@
 export {}
 
 import type {
+  AdoptResult,
+  CategorizeResult,
+  ConvergeResult,
   CreateSkillInput,
+  ImportSkillArchiveInput,
   InstallRepoSkillInput,
+  MachineDiff,
   MachineRecord,
   MachineSnapshot,
   RepoCatalog,
   SetSkillEnabledInput,
   SetSkillEnabledResult,
   SetSyndicationInput,
+  SkillCategory,
   SkillFile,
   SyndicationResult,
   WorkspaceConfig,
@@ -31,6 +37,7 @@ declare global {
         removeSkill(id: string): Promise<WorkspaceSnapshot>
         toggleFavourite(id: string): Promise<WorkspaceSnapshot>
         createSkill(input: CreateSkillInput): Promise<WorkspaceSnapshot>
+        importSkillArchive(input: ImportSkillArchiveInput): Promise<WorkspaceSnapshot>
         listRepoCatalogs(): Promise<RepoCatalog[]>
         addSkillRepo(input: string): Promise<RepoCatalog[]>
         removeSkillRepo(slug: string): Promise<RepoCatalog[]>
@@ -45,6 +52,11 @@ declare global {
         machineSkillOp(name: string, op: 'enable' | 'disable' | 'remove', id: string): Promise<MachineSnapshot>
         setSyndication(input: SetSyndicationInput): Promise<SyndicationResult>
         setSkillEnabled(input: SetSkillEnabledInput): Promise<SetSkillEnabledResult>
+        machineDiff(name: string): Promise<MachineDiff>
+        adoptFromMachine(name: string, skillIds: string[]): Promise<AdoptResult>
+        convergeMachine(name: string, dirNames?: string[]): Promise<ConvergeResult>
+        categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
+        setSkillCategory(id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
       }
     }
   }

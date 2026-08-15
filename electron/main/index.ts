@@ -7,8 +7,10 @@ import { createLibraryStore } from './workspace/library-store'
 import { createSkillWorkspace, type SetSkillEnabledInput, type SetSyndicationInput } from './workspace/skill-workspace'
 import type {
   CreateSkillInput,
+  ImportSkillArchiveInput,
   InstallRepoSkillInput,
   MachineRecord,
+  SkillCategory,
   WorkspaceConfig,
 } from './workspace/types'
 
@@ -84,6 +86,9 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:remove-skill', (_event, id: string) => workspace.removeSkill(id))
   ipcMain.handle('skilldex:toggle-favourite', (_event, id: string) => workspace.toggleFavourite(id))
   ipcMain.handle('skilldex:create-skill', (_event, input: CreateSkillInput) => workspace.createSkill(input))
+  ipcMain.handle('skilldex:import-skill-archive', (_event, input: ImportSkillArchiveInput) =>
+    workspace.importSkillArchive(input),
+  )
   ipcMain.handle('skilldex:list-repo-catalogs', () => workspace.listRepoCatalogs())
   ipcMain.handle('skilldex:add-skill-repo', (_event, input: string) => workspace.addSkillRepo(input))
   ipcMain.handle('skilldex:remove-skill-repo', (_event, slug: string) => workspace.removeSkillRepo(slug))
@@ -111,6 +116,19 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('skilldex:set-skill-enabled', (_event, input: SetSkillEnabledInput) =>
     workspace.setSkillEnabled(input),
+  )
+  ipcMain.handle('skilldex:machine-diff', (_event, name: string) => workspace.machineDiff(name))
+  ipcMain.handle('skilldex:adopt-from-machine', (_event, name: string, skillIds: string[]) =>
+    workspace.adoptFromMachine(name, skillIds),
+  )
+  ipcMain.handle('skilldex:converge-machine', (_event, name: string, dirNames?: string[]) =>
+    workspace.convergeMachine(name, dirNames),
+  )
+  ipcMain.handle('skilldex:categorize-library', (_event, options?: { force?: boolean }) =>
+    workspace.categorizeLibrary(options),
+  )
+  ipcMain.handle('skilldex:set-skill-category', (_event, id: string, category: SkillCategory | null) =>
+    workspace.setSkillCategory(id, category),
   )
 
   createMainWindow()

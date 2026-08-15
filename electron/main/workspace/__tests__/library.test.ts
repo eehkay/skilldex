@@ -223,3 +223,114 @@ describe('library and syndication', () => {
     })
   })
 })
+
+describe('machine diff, adopt, converge', () => {
+  let tmp: string
+  let ws: SkillWorkspace
+  let calls: Array<{ command: string; input: unknown }>
+
+  /** A fake machine holding one hand-authored skill and one repo-sourced skill. */
+  function remoteWithSkills() {
+    calls = []
+    const machineSkills = [
+      {
+        id: '/home/k/.claude/skills/handmade', name: 'handmade', description: 'Local only',
+        path: '/home/k/.claude/skills/handmade', realPath: '/home/k/.claude/skills/handmade',
+        sourceKind: 'Personal', sourceRoot: '~/.claude/skills', displayPath: '~/.claude/skills/handmade',
+        enabled: true, isFavourite: false, isSymlink: false, fileCount: 2, projects: [],
+      },
+      {
+        id: '/home/k/.claude/skills/tdd', name: 'tdd', description: 'TDD',
+        path: '/home/k/.claude/skills/tdd', realPath: '/home/k/.claude/skills/tdd',
+        sourceKind: 'Personal', sourceRoot: '~/.claude/skills', displayPath: '~/.claude/skills/tdd',
+        enabled: true, isFavourite: false, isSymlink: false, fileCount: 1, projects: [],
+        origin: { host: 'github', label: SLUG, repoUrl: `https://github.com/${SLUG}`, webUrl: '' },
+      },
+    ]
+    const exec: ExecLike = async (_cmd, args, { input }) => {
+      const remote = args[args.length - 1]
+      const ok = (stdout: string): ExecResult => ({ stdout, stderr: '', code: 0 })
+      if (remote.includes('sha256sum')) return ok('missing')
+      if (remote.includes('cat >')) return ok('')
+      const match = /agent\.js ([\w-]+)/.exec(remote)
+      if (!match) return { stdout: '', stderr: 'unexpected', code: 1 }
+      const parsed = input ? JSON.parse(input) : undefined
+      calls.push({ command: match[1], input: parsed })
+      const snap = { skills: machineSkills, projects: [], sources: [], errors: [], scannedAt: '', homeDir: '/home/k' }
+      if (match[1] === 'ping') return ok(JSON.stringify({ ok: true }))
+      if (match[1] === 'snapshot') return ok(JSON.stringify(snap))
+      if (match[1] === 'read-skill') {
+        const skill = machineSkills.find((entry) => entry.id === parsed.id)
+        return ok(JSON.stringify({
+          skill,
+          files: [
+            { path: 'SKILL.md', base64: Buffer.from(`---\nname: ${skill?.name}\ndescription: ${skill?.description}\n---\n`).toString('base64') },
+            { path: 'notes/extra.txt', base64: Buffer.from('extra').toString('base64') },
+          ],
+        }))
+      }
+      if (match[1] === 'write-skill' || match[1] === 'install') {
+        machineSkills.push({ ...machineSkills[0], id: `/home/k/.claude/skills/${parsed.dirName ?? 'x'}`, name: parsed.dirName ?? 'x', realPath: `/home/k/.claude/skills/${parsed.dirName ?? 'x'}` })
+        return ok(JSON.stringify(snap))
+      }
+      return ok(JSON.stringify(snap))
+    }
+    return exec
+  }
+
+  beforeEach(async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-adopt-'))
+    const agentPath = path.join(tmp, 'agent.js')
+    await fs.writeFile(agentPath, '// agent')
+    ws = createSkillWorkspace({
+      homeDir: tmp,
+      configStore: createConfigStore(path.join(tmp, 'config.json')),
+      libraryStore: createLibraryStore(path.join(tmp, 'library.json')),
+      fetchImpl: fakeFetch(routes()),
+      agentPath,
+      execImpl: remoteWithSkills(),
+    })
+    await ws.addSkillRepo(SLUG)
+    await ws.addMachine({ name: 'tower', host: 'arch-tower', user: 'kellogg' })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  it('diff reports what is only on the machine and only in the library', async () => {
+    // Put one skill in the library that the machine lacks.
+    await ws.createSkill({ name: 'lib-only', description: 'hub authored', scope: 'global' })
+    const diff = await ws.machineDiff('tower')
+    expect(diff.onlyOnMachine.map((skill) => skill.name).sort()).toEqual(['handmade', 'tdd'])
+    expect(diff.onlyInLibrary.map((skill) => skill.name)).toEqual(['lib-only'])
+    expect(diff.inSync).toBe(0)
+  })
+
+  it('adopt copies origin-less skills and re-imports repo-sourced ones pinned', async () => {
+    const result = await ws.adoptFromMachine('tower', ['/home/k/.claude/skills/handmade', '/home/k/.claude/skills/tdd'])
+    expect(result.adopted.sort()).toEqual(['handmade', 'tdd'])
+    expect(result.failed).toEqual({})
+
+    // handmade: file copy, no repo, adoptedFrom recorded, machine as target
+    await expect(fs.readFile(path.join(tmp, '.claude', 'skills', 'handmade', 'notes', 'extra.txt'), 'utf8')).resolves.toBe('extra')
+    const ledger = JSON.parse(await fs.readFile(path.join(tmp, 'library.json'), 'utf8')).skills
+    expect(ledger.handmade).toMatchObject({ repo: '', adoptedFrom: 'tower', targets: [{ machine: 'tower', scope: 'global' }] })
+
+    // tdd: known origin in a tracked repo → re-imported at the pinned sha
+    expect(ledger.tdd).toMatchObject({ repo: SLUG, path: 'skills/tdd', ref: SHA, adoptedFrom: 'tower' })
+    // Nothing was written back to the machine.
+    expect(calls.filter((call) => call.command === 'write-skill' || call.command === 'install')).toEqual([])
+  })
+
+  it('converge pushes library files for origin-less skills and repo installs for the rest', async () => {
+    await ws.createSkill({ name: 'lib-only', description: 'hub authored', scope: 'global' })
+    await ws.installRepoSkill({ repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+    // machine already has tdd, so only lib-only is missing → write-skill path
+    const result = await ws.convergeMachine('tower')
+    expect(result.installed).toEqual(['lib-only'])
+    const write = calls.find((call) => call.command === 'write-skill')
+    expect(write?.input).toMatchObject({ dirName: 'lib-only' })
+    expect((write?.input as { files: unknown[] }).files.length).toBeGreaterThan(0)
+  })
+})

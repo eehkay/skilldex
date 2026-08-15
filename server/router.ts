@@ -33,6 +33,7 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     ['POST /api/remove-skill', async (q, b) => workspace.removeSkill(id(q, b))],
     ['POST /api/toggle-favourite', async (q, b) => workspace.toggleFavourite(id(q, b))],
     ['POST /api/create-skill', async (_q, body) => workspace.createSkill(body.input as never)],
+    ['POST /api/import-skill-archive', async (_q, body) => workspace.importSkillArchive(body.input as never)],
     ['GET /api/repos', async () => workspace.listRepoCatalogs()],
     ['POST /api/add-repo', async (_q, body) => {
       if (typeof body.input !== 'string') throw new Error('Missing repo input.')
@@ -73,6 +74,26 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     }],
     ['POST /api/set-syndication', async (_q, body) => workspace.setSyndication(body.input as never)],
     ['POST /api/set-skill-enabled', async (_q, body) => workspace.setSkillEnabled(body.input as never)],
+    ['GET /api/machine-diff', async (q) => {
+      const name = q.get('name')
+      if (!name) throw new Error('Missing machine name.')
+      return workspace.machineDiff(name)
+    }],
+    ['POST /api/adopt-from-machine', async (_q, body) => {
+      if (typeof body.name !== 'string' || !Array.isArray(body.skillIds)) throw new Error('Missing name or skillIds.')
+      return workspace.adoptFromMachine(body.name, body.skillIds as string[])
+    }],
+    ['POST /api/categorize-library', async (_q, body) =>
+      workspace.categorizeLibrary({ force: body.force === true })],
+    ['POST /api/set-skill-category', async (_q, body) => {
+      const id = typeof body.id === 'string' ? body.id : ''
+      if (!id) throw new Error('Missing skill id.')
+      return workspace.setSkillCategory(id, (body.category as never) ?? null)
+    }],
+    ['POST /api/converge-machine', async (_q, body) => {
+      if (typeof body.name !== 'string') throw new Error('Missing machine name.')
+      return workspace.convergeMachine(body.name, Array.isArray(body.dirNames) ? (body.dirNames as string[]) : undefined)
+    }],
     ['POST /api/machine-skill-op', async (_q, body) => {
       const { name, op } = body
       if (typeof name !== 'string') throw new Error('Missing machine name.')
@@ -126,7 +147,8 @@ function readBody(request: IncomingMessage): Promise<string> {
     let size = 0
     request.on('data', (chunk: Buffer) => {
       size += chunk.length
-      if (size > 1_000_000) {
+      // Generous enough for a base64-encoded skill archive (see MAX_ARCHIVE_BYTES).
+      if (size > 48_000_000) {
         reject(new Error('Body too large'))
         request.destroy()
         return

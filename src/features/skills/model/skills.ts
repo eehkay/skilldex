@@ -21,11 +21,49 @@ export type SyndicationTarget = {
   projectName?: string
 }
 
+export type SkillCategory =
+  | 'marketing'
+  | 'content'
+  | 'analytics'
+  | 'design'
+  | 'dev'
+  | 'agents'
+  | 'business'
+  | 'documents'
+  | 'research'
+
+export const CATEGORY_LABELS: Record<SkillCategory, string> = {
+  marketing: 'Marketing & Growth',
+  content: 'Content & Writing',
+  analytics: 'Analytics & Data',
+  design: 'Design & Media',
+  dev: 'Dev Tooling',
+  agents: 'Agent Orchestration',
+  business: 'Business Ops',
+  documents: 'Documents & Files',
+  research: 'Research & Knowledge',
+}
+
+export const CATEGORY_ORDER: SkillCategory[] = [
+  'dev', 'agents', 'marketing', 'content', 'analytics', 'design', 'business', 'documents', 'research',
+]
+
 export type LibrarySkillMeta = {
   repo: string
   path: string
   ref: string
   targets: SyndicationTarget[]
+  adoptedFrom?: string
+  category?: SkillCategory
+  categorySource?: 'llm' | 'structural' | 'manual'
+  categoryConfidence?: number
+}
+
+export type CategorizeResult = {
+  workspace: WorkspaceSnapshot
+  categorized: number
+  uncategorized: number
+  usedLlm: boolean
 }
 
 export type SkillRecord = {
@@ -95,11 +133,20 @@ export type WorkspaceConfig = {
   skillRepos: string[]
   machines: MachineRecord[]
   agents: SkillAgent[]
+  anthropicApiKey?: string
 }
 
 export type CreateSkillInput = {
   name: string
   description: string
+  scope: 'global' | 'project'
+  projectName?: string
+}
+
+export type ImportSkillArchiveInput = {
+  fileName: string
+  /** Zip bytes, base64-encoded. */
+  data: string
   scope: 'global' | 'project'
   projectName?: string
 }
@@ -164,6 +211,27 @@ export type SetSkillEnabledInput = {
 export type SetSkillEnabledResult = {
   workspace: WorkspaceSnapshot
   machines: MachineSnapshot[]
+}
+
+export type MachineDiff = {
+  machine: MachineRecord
+  onlyOnMachine: SkillRecord[]
+  onlyInLibrary: SkillRecord[]
+  inSync: number
+  error?: string
+}
+
+export type AdoptResult = {
+  workspace: WorkspaceSnapshot
+  adopted: string[]
+  failed: Record<string, string>
+}
+
+export type ConvergeResult = {
+  workspace: WorkspaceSnapshot
+  machine: MachineSnapshot
+  installed: string[]
+  failed: Record<string, string>
 }
 
 /**

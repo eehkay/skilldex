@@ -56,6 +56,9 @@ function normalize(value: unknown): WorkspaceConfig {
         ? [...new Set(input.agents.filter((agent): agent is 'codex' => agent === 'codex'))]
         : []),
     ],
+    ...(typeof input.anthropicApiKey === 'string' && input.anthropicApiKey.trim()
+      ? { anthropicApiKey: input.anthropicApiKey.trim() }
+      : {}),
     machines: Array.isArray(input.machines)
       ? input.machines.filter(
           (machine): machine is WorkspaceConfig['machines'][number] =>

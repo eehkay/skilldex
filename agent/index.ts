@@ -143,6 +143,51 @@ async function main(): Promise<void> {
       emit(await workspace.getSnapshot())
       return
     }
+    case 'read-skill': {
+      // Ship a skill's files back to the hub (for adopting a machine-local
+      // skill into the library). Read-only; base64 so binaries survive JSON.
+      const { id } = JSON.parse(await readStdin()) as { id: string }
+      const snapshot = await workspace.getSnapshot()
+      const skill = snapshot.skills.find((entry) => entry.id === id)
+      if (!skill) throw new Error(`Unknown skill on this machine: ${id}`)
+      const files = (await workspace.listSkillFiles(id)) ?? []
+      const payload: Array<{ path: string; base64: string }> = []
+      for (const file of files) {
+        const buffer = await fs.readFile(path.join(skill.realPath, ...file.relativePath.split('/')))
+        payload.push({ path: file.relativePath, base64: buffer.toString('base64') })
+      }
+      emit({ skill, files: payload })
+      return
+    }
+    case 'write-skill': {
+      // Receive a skill's files from the hub (converging a hand-authored or
+      // adopted library skill onto this machine). Refuses to overwrite.
+      const input = JSON.parse(await readStdin()) as {
+        dirName: string
+        files: Array<{ path: string; base64: string }>
+      }
+      if (path.basename(input.dirName) !== input.dirName || input.dirName.startsWith('.'))
+        throw new Error(`Invalid skill folder name: ${input.dirName}`)
+      const root = path.join(homeDir, '.claude', 'skills')
+      const dest = path.join(root, input.dirName)
+      const exists = await fs.access(dest).then(() => true).catch(() => false)
+      if (exists) throw new Error(`A skill named "${input.dirName}" already exists on this machine.`)
+      await fs.mkdir(dest, { recursive: true })
+      try {
+        for (const file of input.files) {
+          const rel = path.posix.normalize(file.path)
+          if (rel.startsWith('..') || path.posix.isAbsolute(rel)) throw new Error(`Invalid file path: ${file.path}`)
+          const target = path.join(dest, ...rel.split('/'))
+          await fs.mkdir(path.dirname(target), { recursive: true })
+          await fs.writeFile(target, Buffer.from(file.base64, 'base64'))
+        }
+      } catch (cause) {
+        await fs.rm(dest, { recursive: true, force: true }).catch(() => {})
+        throw cause
+      }
+      emit(await workspace.getSnapshot())
+      return
+    }
     case 'set-enabled': {
       const input = JSON.parse(await readStdin()) as {
         dirName: string

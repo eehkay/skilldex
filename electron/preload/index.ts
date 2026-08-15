@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AdoptResult,
+  CategorizeResult,
+  ConvergeResult,
   SetSkillEnabledInput,
   SetSkillEnabledResult,
   SetSyndicationInput,
@@ -7,10 +10,13 @@ import type {
 } from '../main/workspace/skill-workspace'
 import type {
   CreateSkillInput,
+  ImportSkillArchiveInput,
   InstallRepoSkillInput,
+  MachineDiff,
   MachineRecord,
   MachineSnapshot,
   RepoCatalog,
+  SkillCategory,
   SkillFile,
   WorkspaceConfig,
   WorkspaceSnapshot,
@@ -35,6 +41,8 @@ contextBridge.exposeInMainWorld('skilldex', {
       ipcRenderer.invoke('skilldex:toggle-favourite', id),
     createSkill: (input: CreateSkillInput): Promise<WorkspaceSnapshot> =>
       ipcRenderer.invoke('skilldex:create-skill', input),
+    importSkillArchive: (input: ImportSkillArchiveInput): Promise<WorkspaceSnapshot> =>
+      ipcRenderer.invoke('skilldex:import-skill-archive', input),
     listRepoCatalogs: (): Promise<RepoCatalog[]> => ipcRenderer.invoke('skilldex:list-repo-catalogs'),
     addSkillRepo: (input: string): Promise<RepoCatalog[]> =>
       ipcRenderer.invoke('skilldex:add-skill-repo', input),
@@ -61,5 +69,14 @@ contextBridge.exposeInMainWorld('skilldex', {
       ipcRenderer.invoke('skilldex:set-syndication', input),
     setSkillEnabled: (input: SetSkillEnabledInput): Promise<SetSkillEnabledResult> =>
       ipcRenderer.invoke('skilldex:set-skill-enabled', input),
+    machineDiff: (name: string): Promise<MachineDiff> => ipcRenderer.invoke('skilldex:machine-diff', name),
+    adoptFromMachine: (name: string, skillIds: string[]): Promise<AdoptResult> =>
+      ipcRenderer.invoke('skilldex:adopt-from-machine', name, skillIds),
+    convergeMachine: (name: string, dirNames?: string[]): Promise<ConvergeResult> =>
+      ipcRenderer.invoke('skilldex:converge-machine', name, dirNames),
+    categorizeLibrary: (options?: { force?: boolean }): Promise<CategorizeResult> =>
+      ipcRenderer.invoke('skilldex:categorize-library', options),
+    setSkillCategory: (id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot> =>
+      ipcRenderer.invoke('skilldex:set-skill-category', id, category),
   },
 })

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertCircle, ListFilter, Loader2, Plus, RefreshCw } from 'lucide-react'
+import { AlertCircle, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import { MachineDialog } from '@/features/machines/ui/machine-dialog'
 import { MachineView } from '@/features/machines/ui/machine-view'
 import { Sidebar, type FilterKey, type SidebarCounts } from '@/features/navigation/ui/sidebar'
@@ -7,9 +7,10 @@ import { AddRepoDialog } from '@/features/repos/ui/add-repo-dialog'
 import { InstallSkillDialog, type InstallTarget } from '@/features/repos/ui/install-skill-dialog'
 import { RepoBrowser } from '@/features/repos/ui/repo-browser'
 import { SettingsDialog } from '@/features/settings/ui/settings-dialog'
-import type { RepoSkill, Skill } from '@/features/skills/model/skills'
+import { searchSkills } from '@/features/skills/model/search'
+import { CATEGORY_LABELS, CATEGORY_ORDER, type RepoSkill, type Skill, type SkillCategory } from '@/features/skills/model/skills'
 import { useWorkspace } from '@/features/skills/model/use-workspace'
-import { CreateSkillDialog } from '@/features/skills/ui/create-skill-dialog'
+import { AddSkillDialog } from '@/features/skills/ui/add-skill-dialog'
 import { ProjectGroups } from '@/features/skills/ui/project-groups'
 import { SkillCard } from '@/features/skills/ui/skill-card'
 import { SkillDetail } from '@/features/skills/ui/skill-detail'
@@ -74,6 +75,7 @@ export function Dashboard() {
     remove,
     toggleFavourite,
     create,
+    importArchive,
     repoCatalogs,
     reposLoading,
     addRepo,
@@ -90,6 +92,11 @@ export function Dashboard() {
     machineSkillOp,
     setSyndication,
     setSkillEnabled,
+    machineDiff,
+    adoptFromMachine,
+    convergeMachine,
+    categorizeLibrary,
+    setSkillCategory,
   } = useWorkspace()
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
@@ -100,6 +107,9 @@ export function Dashboard() {
   const [showAddRepo, setShowAddRepo] = useState(false)
   const [installTarget, setInstallTarget] = useState<RepoSkill | null>(null)
   const [activeMachine, setActiveMachine] = useState<string | null>(null)
+  const [category, setCategory] = useState<SkillCategory | 'uncategorized' | null>(null)
+  const [categorizing, setCategorizing] = useState(false)
+  const [categorizeNote, setCategorizeNote] = useState<string | null>(null)
   // null = closed, 'add' = new machine, otherwise the name of the machine being edited.
   const [machineDialog, setMachineDialog] = useState<'add' | string | null>(null)
 
@@ -137,36 +147,93 @@ export function Dashboard() {
     void toggleFavourite(skill.id)
   }
 
+  const searching = query.trim().length > 0
+
+  // Search spans the whole library — every scope, disabled included — so
+  // "where is my pdf skill?" always has an answer. Ranked, name hits first.
+  const matches = useMemo(() => (searching ? searchSkills(skills, query) : skills), [skills, query, searching])
+
   // Switched-off skills live only in the Disabled tab; the source tabs list the
   // active library so a skill never shows up greyed-out in two places at once.
+  // While searching, "All" is every match and the tabs narrow the results.
   const counts: SidebarCounts = useMemo(() => {
-    const active = skills.filter((skill) => skill.enabled)
+    const active = matches.filter((skill) => skill.enabled)
     return {
-      all: active.length,
+      all: searching ? matches.length : active.length,
       // Favourites are shown regardless of enabled state (Q7), so count them all.
-      favourites: skills.filter((skill) => skill.isFavourite).length,
+      favourites: matches.filter((skill) => skill.isFavourite).length,
       global: active.filter((skill) => skill.scope === 'global').length,
       plugin: active.filter((skill) => skill.scope === 'plugin').length,
       project: active.filter((skill) => skill.scope === 'project').length,
-      disabled: skills.filter((skill) => !skill.enabled).length,
+      disabled: matches.filter((skill) => !skill.enabled).length,
     }
-  }, [skills])
+  }, [matches, searching])
 
+  const scopedSkills = useMemo(() => {
+    switch (filter) {
+      case 'disabled':
+        return matches.filter((skill) => !skill.enabled)
+      case 'favourites':
+        return matches.filter((skill) => skill.isFavourite)
+      case 'all':
+        return searching ? matches : matches.filter((skill) => skill.enabled)
+      default:
+        return matches.filter((skill) => skill.enabled && skill.scope === filter)
+    }
+  }, [matches, filter, searching])
+
+  // Category chips narrow the current tab; only library (global) skills carry
+  // categories, so 'uncategorized' means a global skill with none yet.
   const visibleSkills = useMemo(() => {
-    const scoped =
-      filter === 'disabled'
-        ? skills.filter((skill) => !skill.enabled)
-        : filter === 'favourites'
-          ? skills.filter((skill) => skill.isFavourite)
-          : filter === 'all'
-            ? skills.filter((skill) => skill.enabled)
-            : skills.filter((skill) => skill.enabled && skill.scope === filter)
-    const value = query.trim().toLowerCase()
-    if (!value) return scoped
-    return scoped.filter((skill) =>
-      [skill.name, skill.summary, skill.source, ...skill.projects].join(' ').toLowerCase().includes(value),
-    )
-  }, [skills, filter, query])
+    if (category === null) return scopedSkills
+    if (category === 'uncategorized')
+      return scopedSkills.filter((skill) => skill.scope === 'global' && !skill.library?.category)
+    return scopedSkills.filter((skill) => skill.library?.category === category)
+  }, [scopedSkills, category])
+
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<SkillCategory | 'uncategorized', number>()
+    for (const skill of scopedSkills) {
+      if (skill.scope !== 'global') continue
+      const key = skill.library?.category ?? 'uncategorized'
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return counts
+  }, [scopedSkills])
+
+  const runCategorize = async (force = false) => {
+    setCategorizing(true)
+    setCategorizeNote(null)
+    try {
+      const result = await categorizeLibrary({ force })
+      if (result) {
+        setCategorizeNote(
+          `${result.categorized} categorized` +
+            (result.uncategorized > 0
+              ? `, ${result.uncategorized} left${result.usedLlm ? '' : ' — add an Anthropic API key in Settings for smart categorization'}`
+              : '') +
+            '.',
+        )
+      }
+    } catch (cause) {
+      setCategorizeNote(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setCategorizing(false)
+    }
+  }
+
+  // Typing in the sidebar search always lands you on the library, on the
+  // all-encompassing tab, whatever pane was open — results are never hidden
+  // behind a machine, repo, or detail view.
+  const search = (value: string) => {
+    if (value.trim() && !searching) {
+      setFilter('all')
+      setSelectedId(null)
+      setActiveRepo(null)
+      setActiveMachine(null)
+    }
+    setQuery(value)
+  }
 
   // In the Project tab, organize the (already search-filtered) skills by project.
   const projectGroups = useMemo(() => {
@@ -177,7 +244,13 @@ export function Dashboard() {
   }, [filter, snapshot.projects, visibleSkills])
 
   const selected = selectedId ? skills.find((skill) => skill.id === selectedId) ?? null : null
-  const heading = HEADINGS[filter]
+  const heading = searching
+    ? {
+        title: 'Search',
+        subtitle: `${matches.length} ${matches.length === 1 ? 'skill matches' : 'skills match'} “${query.trim()}” across your whole library. Pick a tab to narrow the results.`,
+        pill: `${matches.length} ${matches.length === 1 ? 'result' : 'results'}`,
+      }
+    : HEADINGS[filter]
   const activeCatalog = activeRepo ? repoCatalogs.find((repo) => repo.slug === activeRepo) ?? null : null
   const activeMachineEntry = activeMachine
     ? machineSnapshots.find((entry) => entry.machine.name === activeMachine) ?? null
@@ -206,8 +279,8 @@ export function Dashboard() {
         machines={machineSnapshots}
         activeMachine={activeMachine}
         query={query}
-        onQuery={setQuery}
-        onFilter={(key) => { setFilter(key); setSelectedId(null); setActiveRepo(null); setActiveMachine(null) }}
+        onQuery={search}
+        onFilter={(key) => { setFilter(key); setSelectedId(null); setActiveRepo(null); setActiveMachine(null); setCategory(null) }}
         onSelectRepo={(slug) => { setActiveRepo(slug); setSelectedId(null); setActiveMachine(null) }}
         onAddRepo={() => setShowAddRepo(true)}
         onSelectMachine={(name) => { setActiveMachine(name); setSelectedId(null); setActiveRepo(null) }}
@@ -230,6 +303,9 @@ export function Dashboard() {
             onSkillOp={(op, id) =>
               void machineSkillOp(activeMachineEntry.machine.name, op, id).catch(() => {})
             }
+            loadDiff={machineDiff}
+            onAdopt={(ids) => adoptFromMachine(activeMachineEntry.machine.name, ids)}
+            onConverge={(names) => convergeMachine(activeMachineEntry.machine.name, names)}
           />
         ) : activeCatalog ? (
           <RepoBrowser
@@ -259,6 +335,9 @@ export function Dashboard() {
             onSetSkillEnabled={async (input) => {
               await setSkillEnabled(input)
             }}
+            onSetCategory={async (value) => {
+              await setSkillCategory(selected.id, value)
+            }}
             onBack={() => setSelectedId(null)}
           />
         ) : (
@@ -280,7 +359,7 @@ export function Dashboard() {
                   className="flex h-[38px] items-center gap-1.5 rounded-[9px] bg-[#f97316] px-4 text-[13px] font-semibold text-white shadow-[0_6px_18px_-6px_rgba(249,115,22,.6)] transition hover:bg-[#ea580c]"
                 >
                   <Plus className="size-[15px]" />
-                  New Skill
+                  Add Skill
                 </button>
               </div>
 
@@ -314,6 +393,42 @@ export function Dashboard() {
                   Sort: Name
                 </div>
               </div>
+
+              {categoryCounts.size > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <CategoryChip label="All categories" active={category === null} onClick={() => setCategory(null)} />
+                  {CATEGORY_ORDER.filter((key) => (categoryCounts.get(key) ?? 0) > 0).map((key) => (
+                    <CategoryChip
+                      key={key}
+                      label={CATEGORY_LABELS[key]}
+                      count={categoryCounts.get(key)}
+                      active={category === key}
+                      onClick={() => setCategory(category === key ? null : key)}
+                    />
+                  ))}
+                  {(categoryCounts.get('uncategorized') ?? 0) > 0 && (
+                    <CategoryChip
+                      label="Uncategorized"
+                      count={categoryCounts.get('uncategorized')}
+                      active={category === 'uncategorized'}
+                      muted
+                      onClick={() => setCategory(category === 'uncategorized' ? null : 'uncategorized')}
+                    />
+                  )}
+                  <div className="flex-1" />
+                  {categorizeNote && <span className="text-[12px] text-[#71717a]">{categorizeNote}</span>}
+                  <button
+                    type="button"
+                    onClick={() => void runCategorize(false)}
+                    disabled={categorizing}
+                    title="Assign categories to uncategorized library skills"
+                    className="flex h-7 items-center gap-1.5 rounded-[8px] border border-[#27272a] bg-[#18181b] px-2.5 text-[12px] font-medium text-[#e4e4e7] transition hover:border-[#3a3a42] disabled:opacity-60"
+                  >
+                    {categorizing ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5 text-[#fb923c]" />}
+                    Categorize
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-7 pt-5">
@@ -363,14 +478,18 @@ export function Dashboard() {
         )}
       </main>
 
-      <CreateSkillDialog
-        open={showCreate}
-        projects={snapshot.projects}
-        onClose={() => setShowCreate(false)}
-        onCreate={async (input) => {
-          await create(input)
-        }}
-      />
+      {showCreate && (
+        <AddSkillDialog
+          projects={snapshot.projects}
+          onClose={() => setShowCreate(false)}
+          onImport={async (input) => {
+            await importArchive(input)
+          }}
+          onCreate={async (input) => {
+            await create(input)
+          }}
+        />
+      )}
 
       <SettingsDialog
         open={showSettings}
@@ -432,5 +551,36 @@ export function Dashboard() {
         />
       ) : null}
     </div>
+  )
+}
+
+function CategoryChip({
+  label,
+  count,
+  active,
+  muted = false,
+  onClick,
+}: {
+  label: string
+  count?: number
+  active: boolean
+  muted?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium transition ${
+        active
+          ? 'border-[#f97316] bg-[#1a1109] text-[#fb923c]'
+          : muted
+            ? 'border-dashed border-[#27272a] text-[#71717a] hover:border-[#3a3a42]'
+            : 'border-[#27272a] bg-[#111114] text-[#a1a1aa] hover:border-[#3a3a42] hover:text-[#e4e4e7]'
+      }`}
+    >
+      {label}
+      {count !== undefined && <span className="font-mono text-[10.5px] opacity-70">{count}</span>}
+    </button>
   )
 }

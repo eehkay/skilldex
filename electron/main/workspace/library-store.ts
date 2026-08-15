@@ -68,6 +68,10 @@ function normalize(value: unknown): Record<string, LibrarySkillMeta> {
       repo: entry.repo,
       path: typeof entry.path === 'string' ? entry.path : '',
       ref: entry.ref,
+      ...(typeof entry.adoptedFrom === 'string' ? { adoptedFrom: entry.adoptedFrom } : {}),
+      ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
+      ...(typeof entry.categorySource === 'string' ? { categorySource: entry.categorySource } : {}),
+      ...(typeof entry.categoryConfidence === 'number' ? { categoryConfidence: entry.categoryConfidence } : {}),
       targets: Array.isArray(entry.targets)
         ? entry.targets.filter(
             (target): target is SyndicationTarget =>

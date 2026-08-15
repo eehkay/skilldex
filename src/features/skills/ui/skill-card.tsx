@@ -1,5 +1,5 @@
-import { FileText, GitFork, Server } from 'lucide-react'
-import { scopePillClass, shortRef, type Skill } from '../model/skills'
+import { FileText, GitFork, Server, Tag } from 'lucide-react'
+import { CATEGORY_LABELS, scopePillClass, shortRef, type Skill } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
 
@@ -58,6 +58,15 @@ export function SkillCard({ skill, onOpen, onToggle, onToggleFavourite }: SkillC
       <p className="line-clamp-2 min-h-[38px] text-[12.5px] leading-relaxed text-[#a1a1aa]">{skill.summary}</p>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {skill.library?.category && (
+          <span
+            title={`Category: ${CATEGORY_LABELS[skill.library.category]}${skill.library.categorySource === 'manual' ? ' (set by you)' : ''}`}
+            className="flex items-center gap-1 rounded-md border border-[#2a2a30] bg-[#15151a] px-1.5 py-0.5 text-[11px] text-[#c4c4cc]"
+          >
+            <Tag className="size-3 shrink-0 text-[#71717a]" />
+            {CATEGORY_LABELS[skill.library.category]}
+          </span>
+        )}
         {provenance && (
           <span
             title={version ? `Imported from ${provenance} @ ${version}` : `From ${provenance}`}

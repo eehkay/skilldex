@@ -4,12 +4,15 @@ import {
   emptySnapshot,
   toSkill,
   type CreateSkillInput,
+  type ImportSkillArchiveInput,
   type InstallRepoSkillInput,
   type MachineRecord,
   type MachineSnapshot,
   type RepoCatalog,
+  type MachineDiff,
   type SetSkillEnabledInput,
   type SetSyndicationInput,
+  type SkillCategory,
   type Skill,
   type SkillFile,
   type WorkspaceConfig,
@@ -33,6 +36,7 @@ export type WorkspaceState = {
   remove: (id: string) => Promise<WorkspaceSnapshot | null>
   toggleFavourite: (id: string) => Promise<WorkspaceSnapshot | null>
   create: (input: CreateSkillInput) => Promise<WorkspaceSnapshot | null>
+  importArchive: (input: ImportSkillArchiveInput) => Promise<WorkspaceSnapshot | null>
   repoCatalogs: RepoCatalog[]
   reposLoading: boolean
   addRepo: (input: string) => Promise<void>
@@ -49,6 +53,11 @@ export type WorkspaceState = {
   machineSkillOp: (name: string, op: 'enable' | 'disable' | 'remove', id: string) => Promise<void>
   setSyndication: (input: SetSyndicationInput) => Promise<void>
   setSkillEnabled: (input: SetSkillEnabledInput) => Promise<WorkspaceSnapshot | null>
+  machineDiff: (name: string) => Promise<MachineDiff | null>
+  adoptFromMachine: (name: string, skillIds: string[]) => Promise<{ adopted: string[]; failed: Record<string, string> } | null>
+  convergeMachine: (name: string, dirNames?: string[]) => Promise<{ installed: string[]; failed: Record<string, string> } | null>
+  categorizeLibrary: (options?: { force?: boolean }) => Promise<{ categorized: number; uncategorized: number; usedLlm: boolean } | null>
+  setSkillCategory: (id: string, category: SkillCategory | null) => Promise<WorkspaceSnapshot | null>
 }
 
 // Electron injects window.skilldex via preload; served by the hub instead,
@@ -144,6 +153,10 @@ export function useWorkspace(): WorkspaceState {
   const remove = useCallback((id: string) => mutate((w) => w.removeSkill(id)), [mutate])
   const toggleFavourite = useCallback((id: string) => mutate((w) => w.toggleFavourite(id)), [mutate])
   const create = useCallback((input: CreateSkillInput) => mutate((w) => w.createSkill(input)), [mutate])
+  const importArchive = useCallback(
+    (input: ImportSkillArchiveInput) => mutate((w) => w.importSkillArchive(input)),
+    [mutate],
+  )
 
   // A repo mutation that surfaces its failure to the caller (dialogs keep
   // their error inline) while keeping the catalog list in sync on success.
@@ -251,6 +264,57 @@ export function useWorkspace(): WorkspaceState {
     }
   }, [])
 
+  const machineDiff = useCallback((name: string) => bridge()?.machineDiff(name) ?? Promise.resolve(null), [])
+
+  const adoptFromMachine = useCallback(async (name: string, skillIds: string[]) => {
+    setMachinesLoading(true)
+    try {
+      const result = await bridge()?.adoptFromMachine(name, skillIds)
+      if (!result) return null
+      setSnapshot(result.workspace)
+      return { adopted: result.adopted, failed: result.failed }
+    } finally {
+      setMachinesLoading(false)
+    }
+  }, [])
+
+  const convergeMachine = useCallback(async (name: string, dirNames?: string[]) => {
+    setMachinesLoading(true)
+    try {
+      const result = await bridge()?.convergeMachine(name, dirNames)
+      if (!result) return null
+      setSnapshot(result.workspace)
+      setMachineSnapshots((current) =>
+        current.map((entry) => (entry.machine.name === result.machine.machine.name ? result.machine : entry)),
+      )
+      return { installed: result.installed, failed: result.failed }
+    } finally {
+      setMachinesLoading(false)
+    }
+  }, [])
+
+  const categorizeLibrary = useCallback(async (options?: { force?: boolean }) => {
+    setLoading(true)
+    try {
+      const result = await bridge()?.categorizeLibrary(options)
+      if (!result) return null
+      setSnapshot(result.workspace)
+      setError(null)
+      return { categorized: result.categorized, uncategorized: result.uncategorized, usedLlm: result.usedLlm }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      throw new Error(message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const setSkillCategory = useCallback(
+    (id: string, category: SkillCategory | null) => mutate((w) => w.setSkillCategory(id, category)),
+    [mutate],
+  )
+
   const setSyndication = useCallback(async (input: SetSyndicationInput) => {
     setMachinesLoading(true)
     try {
@@ -303,6 +367,7 @@ export function useWorkspace(): WorkspaceState {
     remove,
     toggleFavourite,
     create,
+    importArchive,
     repoCatalogs,
     reposLoading,
     addRepo,
@@ -319,5 +384,10 @@ export function useWorkspace(): WorkspaceState {
     machineSkillOp,
     setSyndication,
     setSkillEnabled,
+    machineDiff,
+    adoptFromMachine,
+    convergeMachine,
+    categorizeLibrary,
+    setSkillCategory,
   }
 }

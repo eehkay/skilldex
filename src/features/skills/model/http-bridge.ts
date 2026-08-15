@@ -14,14 +14,20 @@
  */
 
 import type {
+  AdoptResult,
+  CategorizeResult,
+  ConvergeResult,
   CreateSkillInput,
+  ImportSkillArchiveInput,
   InstallRepoSkillInput,
+  MachineDiff,
   MachineRecord,
   MachineSnapshot,
   RepoCatalog,
   SetSkillEnabledInput,
   SetSkillEnabledResult,
   SetSyndicationInput,
+  SkillCategory,
   SkillFile,
   SyndicationResult,
   WorkspaceConfig,
@@ -68,6 +74,8 @@ export function createHttpBridge(): WorkspaceBridge {
     removeSkill: (id: string) => call<WorkspaceSnapshot>('POST', 'remove-skill', { id }),
     toggleFavourite: (id: string) => call<WorkspaceSnapshot>('POST', 'toggle-favourite', { id }),
     createSkill: (input: CreateSkillInput) => call<WorkspaceSnapshot>('POST', 'create-skill', { input }),
+    importSkillArchive: (input: ImportSkillArchiveInput) =>
+      call<WorkspaceSnapshot>('POST', 'import-skill-archive', { input }),
     listRepoCatalogs: () => call<RepoCatalog[]>('GET', 'repos'),
     addSkillRepo: (input: string) => call<RepoCatalog[]>('POST', 'add-repo', { input }),
     removeSkillRepo: (slug: string) => call<RepoCatalog[]>('POST', 'remove-repo', { slug }),
@@ -86,6 +94,15 @@ export function createHttpBridge(): WorkspaceBridge {
       call<MachineSnapshot>('POST', 'machine-skill-op', { name, op, id }),
     setSkillEnabled: (input: SetSkillEnabledInput) =>
       call<SetSkillEnabledResult>('POST', 'set-skill-enabled', { input }),
+    machineDiff: (name: string) => call<MachineDiff>('GET', `machine-diff?name=${encodeURIComponent(name)}`),
+    adoptFromMachine: (name: string, skillIds: string[]) =>
+      call<AdoptResult>('POST', 'adopt-from-machine', { name, skillIds }),
+    convergeMachine: (name: string, dirNames?: string[]) =>
+      call<ConvergeResult>('POST', 'converge-machine', { name, dirNames }),
+    categorizeLibrary: (options?: { force?: boolean }) =>
+      call<CategorizeResult>('POST', 'categorize-library', { force: options?.force ?? false }),
+    setSkillCategory: (id: string, category: SkillCategory | null) =>
+      call<WorkspaceSnapshot>('POST', 'set-skill-category', { id, category }),
     setSyndication: (input: SetSyndicationInput) =>
       call<SyndicationResult>('POST', 'set-syndication', { input }),
   }

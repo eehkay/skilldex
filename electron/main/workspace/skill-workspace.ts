@@ -10,6 +10,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { syncAgentLinks } from './agent-links'
+import { categorizeSkills, createAnthropicClassifier, type ClassifierClient } from './categorizer'
 import type { ConfigStore } from './config'
 import { createMemoryLibraryStore, type LibraryStore } from './library-store'
 import { favouriteKeyFor } from './favourite-key'
@@ -35,13 +36,17 @@ import {
   slugify,
 } from './skill-manager'
 import { createMachineManager, type ExecLike, type MachineManager } from './machines'
+import { MAX_ARCHIVE_BYTES, planSkillArchive, readZip, writeSkillArchive } from './skill-archive'
 import type {
   CreateSkillInput,
+  ImportSkillArchiveInput,
   InstallRepoSkillInput,
   LibrarySkillMeta,
   MachineRecord,
+  MachineDiff,
   MachineSnapshot,
   RepoCatalog,
+  SkillCategory,
   SkillFile,
   SkillRecord,
   SourceRecord,
@@ -63,6 +68,8 @@ export type SkillWorkspaceDeps = {
   knownHostsFile?: string
   /** Library ledger (import provenance + syndication); in-memory when absent. */
   libraryStore?: LibraryStore
+  /** Builds the LLM classifier from an API key; injected in tests. */
+  classifierFactory?: (apiKey: string) => ClassifierClient
 }
 
 /** Result of a syndication change: the library view plus the machine's new state. */
@@ -97,6 +104,21 @@ export type SetSkillEnabledResult = {
   machines: MachineSnapshot[]
 }
 
+export type AdoptResult = {
+  workspace: WorkspaceSnapshot
+  /** Skill folder names that landed in the library. */
+  adopted: string[]
+  /** Per-skill failures (name → message); the rest still succeeded. */
+  failed: Record<string, string>
+}
+
+export type ConvergeResult = {
+  workspace: WorkspaceSnapshot
+  machine: MachineSnapshot
+  installed: string[]
+  failed: Record<string, string>
+}
+
 export type SkillWorkspace = {
   getConfig(): Promise<WorkspaceConfig>
   getSnapshot(): Promise<WorkspaceSnapshot>
@@ -117,6 +139,8 @@ export type SkillWorkspace = {
   toggleFavourite(id: string): Promise<WorkspaceSnapshot>
   /** Scaffold a new skill folder with a SKILL.md. Returns the fresh snapshot. */
   createSkill(input: CreateSkillInput): Promise<WorkspaceSnapshot>
+  /** Unpack a zipped skill into the global or a project skills root. Returns the fresh snapshot. */
+  importSkillArchive(input: ImportSkillArchiveInput): Promise<WorkspaceSnapshot>
   /** Catalogs for every configured skill repo (per-repo errors inline, never thrown). */
   listRepoCatalogs(): Promise<RepoCatalog[]>
   /** Validate, scan, and persist a new skill repo. Returns all catalogs. */
@@ -148,6 +172,32 @@ export type SkillWorkspace = {
   setSyndication(input: SetSyndicationInput): Promise<SyndicationResult>
   /** Enable/disable with granular reach: locally, on one machine, or everywhere. */
   setSkillEnabled(input: SetSkillEnabledInput): Promise<SetSkillEnabledResult>
+  /** Compare a machine's Personal skills with the library, by folder name. */
+  machineDiff(name: string): Promise<MachineDiff>
+  /**
+   * Bring machine-local skills into the library. Skills with a known GitHub
+   * origin re-import from it (pinned); the rest are copied off the machine.
+   * The machine's copy is left untouched and recorded as syndicated there.
+   */
+  adoptFromMachine(name: string, skillIds: string[]): Promise<AdoptResult>
+  /** Install every library skill (or the given folder names) missing from a machine. */
+  convergeMachine(name: string, dirNames?: string[]): Promise<ConvergeResult>
+  /**
+   * Assign categories to library skills that lack one (or all, when force).
+   * Manual assignments are never touched. Structural inference is free; the
+   * LLM layer runs only when an Anthropic API key is configured.
+   */
+  categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
+  /** Manually set (or clear with null) a library skill's category. */
+  setSkillCategory(skillId: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
+}
+
+export type CategorizeResult = {
+  workspace: WorkspaceSnapshot
+  categorized: number
+  /** Skills that could not be categorized (no structural signal, no LLM key or LLM skipped them). */
+  uncategorized: number
+  usedLlm: boolean
 }
 
 /** Management is only meaningful for skills we own on disk, never plugin skills. */
@@ -164,6 +214,7 @@ export function createSkillWorkspace({
   execImpl,
   knownHostsFile,
   libraryStore = createMemoryLibraryStore(),
+  classifierFactory = createAnthropicClassifier,
 }: SkillWorkspaceDeps): SkillWorkspace {
   const machineManager: MachineManager | null = agentPath
     ? createMachineManager({ agentPath, execImpl, knownHostsFile })
@@ -491,6 +542,21 @@ export function createSkillWorkspace({
       return buildSnapshot(config)
     },
 
+    async importSkillArchive(input) {
+      if (typeof input.data !== 'string' || !input.data) throw new Error('No archive data received.')
+      // Base64 inflates by 4/3; bound the encoded size before decoding.
+      if (input.data.length > (MAX_ARCHIVE_BYTES * 4) / 3 + 4)
+        throw new Error('Archive is larger than 32 MB.')
+      const bytes = Buffer.from(input.data, 'base64')
+      const fallbackName = path.basename(input.fileName || 'skill', path.extname(input.fileName || ''))
+      const plan = planSkillArchive(readZip(bytes), fallbackName)
+
+      const config = await configStore.load()
+      const root = await resolveTargetRoot(config, input.scope, input.projectName)
+      await writeSkillArchive(root, plan)
+      return buildSnapshot(config)
+    },
+
     async listRepoCatalogs() {
       const config = await configStore.load()
       return catalogsFor(config.skillRepos)
@@ -731,7 +797,251 @@ export function createSkillWorkspace({
 
       return { workspace: await buildSnapshot(config), machines: touched }
     },
+
+    async machineDiff(name) {
+      const machine = await findMachine(name)
+      const remote = await machines().snapshot(machine)
+      const local = await buildSnapshot(await configStore.load())
+      const libraryNames = new Map(
+        local.skills
+          .filter((skill) => skill.sourceKind === 'Personal')
+          .map((skill) => [dirNameOf(skill), skill] as const),
+      )
+      if (!remote.snapshot) {
+        return { machine, onlyOnMachine: [], onlyInLibrary: [], inSync: 0, error: remote.error }
+      }
+      const remotePersonal = remote.snapshot.skills.filter((skill) => skill.sourceKind === 'Personal')
+      const remoteNames = new Set(remotePersonal.map(dirNameOf))
+      return {
+        machine,
+        onlyOnMachine: remotePersonal.filter((skill) => !libraryNames.has(dirNameOf(skill))),
+        onlyInLibrary: [...libraryNames.values()].filter((skill) => !remoteNames.has(dirNameOf(skill))),
+        inSync: remotePersonal.filter((skill) => libraryNames.has(dirNameOf(skill))).length,
+      }
+    },
+
+    async adoptFromMachine(name, skillIds) {
+      const machine = await findMachine(name)
+      const config = await configStore.load()
+      const root = path.join(homeDir, '.claude', 'skills')
+      await fs.mkdir(root, { recursive: true })
+      const adopted: string[] = []
+      const failed: Record<string, string> = {}
+
+      for (const id of skillIds) {
+        let label = id
+        try {
+          const { skill, files } = await machines().readSkill(machine, id)
+          label = skill.name
+          if (skill.sourceKind !== 'Personal') throw new Error('Only personal (global) skills can be adopted.')
+          const dirName = dirNameOf(skill)
+          const dest = path.join(root, dirName)
+          const exists = await fs.access(dest).then(() => true).catch(() => false)
+          const target: SyndicationTarget = { machine: name, scope: 'global' }
+
+          if (exists) {
+            // Already in the library — just record that this machine has it.
+            const existing = (await libraryStore.load())[dirName]
+            await libraryStore.set(dirName, {
+              repo: existing?.repo ?? '',
+              path: existing?.path ?? '',
+              ref: existing?.ref ?? '',
+              targets: withTarget(existing?.targets ?? [], target),
+              adoptedFrom: existing?.adoptedFrom,
+            })
+            adopted.push(dirName)
+            continue
+          }
+
+          // Known GitHub origin from a repo we track → re-import pinned from
+          // there, so the library copy is updatable. Otherwise copy the files.
+          const origin = skill.origin
+          const originRepo = origin?.host === 'github' ? origin.label : undefined
+          if (originRepo && config.skillRepos.includes(originRepo)) {
+            const scan = await scanRepo(originRepo)
+            const match = scan.catalog.skills.find((entry) => path.posix.basename(entry.path) === dirName)
+            const repoFiles = match && scan.filesBySkill.get(match.id)
+            if (match && repoFiles) {
+              const pinnedRef = scan.catalog.commitSha ?? scan.catalog.ref
+              await downloadRepoSkill({
+                slug: originRepo,
+                ref: pinnedRef,
+                dir: match.path,
+                files: repoFiles,
+                dest,
+                fetchImpl,
+              })
+              await libraryStore.set(dirName, {
+                repo: originRepo,
+                path: match.path,
+                ref: pinnedRef,
+                targets: [target],
+                adoptedFrom: name,
+              })
+              adopted.push(dirName)
+              continue
+            }
+          }
+
+          await fs.mkdir(dest, { recursive: true })
+          try {
+            for (const file of files) {
+              const target = path.join(dest, ...file.path.split('/'))
+              await fs.mkdir(path.dirname(target), { recursive: true })
+              await fs.writeFile(target, Buffer.from(file.base64, 'base64'))
+            }
+          } catch (cause) {
+            await fs.rm(dest, { recursive: true, force: true }).catch(() => {})
+            throw cause
+          }
+          await libraryStore.set(dirName, {
+            repo: originRepo ?? '',
+            path: '',
+            ref: '',
+            targets: [target],
+            adoptedFrom: name,
+          })
+          adopted.push(dirName)
+        } catch (cause) {
+          failed[label] = cause instanceof Error ? cause.message : String(cause)
+        }
+      }
+
+      return { workspace: await buildSnapshot(config), adopted, failed }
+    },
+
+    async convergeMachine(name, dirNames) {
+      const machine = await findMachine(name)
+      const config = await configStore.load()
+      const diff = await this.machineDiff(name)
+      if (diff.error) throw new Error(diff.error)
+      const wanted = new Set(dirNames ?? diff.onlyInLibrary.map(dirNameOf))
+      const ledger = await libraryStore.load()
+      const installed: string[] = []
+      const failed: Record<string, string> = {}
+      let snapshot: WorkspaceSnapshot | null = null
+
+      for (const skill of diff.onlyInLibrary) {
+        const dirName = dirNameOf(skill)
+        if (!wanted.has(dirName)) continue
+        const meta = ledger[dirName]
+        const target: SyndicationTarget = { machine: name, scope: 'global' }
+        try {
+          if (meta?.repo && meta.ref) {
+            // Repo-backed: the machine pulls the pinned version from origin.
+            snapshot = await machines().install(machine, {
+              repo: meta.repo,
+              skillId: `${meta.repo}:${meta.path}`,
+              scope: 'global',
+              ref: meta.ref,
+            })
+          } else {
+            // Hand-authored or adopted-without-origin: push the library's
+            // own files to the machine.
+            const files = (await listSkillFiles(skill.realPath).catch(() => [])).map((file) => file.relativePath)
+            const payload: Array<{ path: string; base64: string }> = []
+            for (const relativePath of files) {
+              const buffer = await fs.readFile(path.join(skill.realPath, ...relativePath.split('/')))
+              payload.push({ path: relativePath, base64: buffer.toString('base64') })
+            }
+            snapshot = await machines().writeSkill(machine, { dirName, files: payload })
+          }
+          await libraryStore.set(dirName, {
+            repo: meta?.repo ?? '',
+            path: meta?.path ?? '',
+            ref: meta?.ref ?? '',
+            targets: withTarget(meta?.targets ?? [], target),
+            adoptedFrom: meta?.adoptedFrom,
+          })
+          installed.push(dirName)
+        } catch (cause) {
+          failed[dirName] = cause instanceof Error ? cause.message : String(cause)
+        }
+      }
+
+      const machineState: MachineSnapshot = snapshot
+        ? { machine, snapshot }
+        : await machines().snapshot(machine)
+      return { workspace: await buildSnapshot(config), machine: machineState, installed, failed }
+    },
+
+    async categorizeLibrary(options = {}) {
+      const config = await configStore.load()
+      const before = await buildSnapshot(config)
+      const ledger = await libraryStore.load()
+      const client = config.anthropicApiKey ? classifierFactory(config.anthropicApiKey) : null
+
+      // Candidates: personal (library) skills, skipping manual assignments
+      // always and existing assignments unless forced.
+      const candidates = before.skills.filter((skill) => {
+        if (skill.sourceKind !== 'Personal') return false
+        const meta = ledger[dirNameOf(skill)]
+        if (meta?.categorySource === 'manual') return false
+        return options.force || !meta?.category
+      })
+
+      const assignments = await categorizeSkills(
+        candidates.map((skill) => ({
+          name: dirNameOf(skill),
+          description: skill.description,
+          repoPath: ledger[dirNameOf(skill)]?.path,
+        })),
+        client,
+      )
+
+      let categorized = 0
+      for (const skill of candidates) {
+        const name = dirNameOf(skill)
+        const assignment = assignments.get(name)
+        if (!assignment) continue
+        const existing = ledger[name]
+        await libraryStore.set(name, {
+          repo: existing?.repo ?? '',
+          path: existing?.path ?? '',
+          ref: existing?.ref ?? '',
+          targets: existing?.targets ?? [],
+          ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
+          category: assignment.category,
+          categorySource: assignment.source,
+          categoryConfidence: assignment.confidence,
+        })
+        categorized++
+      }
+
+      return {
+        workspace: await buildSnapshot(config),
+        categorized,
+        uncategorized: candidates.length - categorized,
+        usedLlm: client !== null,
+      }
+    },
+
+    async setSkillCategory(skillId, category) {
+      const skill = await resolveKnown(skillId)
+      if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
+      const name = dirNameOf(skill)
+      const existing = (await libraryStore.load())[name]
+      const base = {
+        repo: existing?.repo ?? '',
+        path: existing?.path ?? '',
+        ref: existing?.ref ?? '',
+        targets: existing?.targets ?? [],
+        ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
+      }
+      await libraryStore.set(
+        name,
+        category
+          ? { ...base, category, categorySource: 'manual', categoryConfidence: 1 }
+          : base,
+      )
+      return buildSnapshot(await configStore.load())
+    },
   }
+}
+
+/** Canonical folder name of a skill (its realPath's basename). */
+function dirNameOf(skill: SkillRecord): string {
+  return path.basename(skill.realPath)
 }
 
 function targetKey(target: SyndicationTarget): string {

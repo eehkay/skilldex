@@ -190,7 +190,11 @@ async function loadSkillLock(homeDir: string): Promise<Record<string, SkillLockE
   }
 }
 
-// Scans `.../marketplaces/<mkt>/{plugins,external_plugins}/<plugin>/skills/<skill>/SKILL.md`.
+// Scans `.../marketplaces/<mkt>/{plugins,external_plugins}/<plugin>/skills/<skill>/SKILL.md`
+// for plugins that are actually enabled on this machine. A marketplace clone is
+// a catalog of every plugin it offers (Claude Code checks the official one out
+// on first run), so without the filter every machine would appear to have the
+// whole marketplace installed.
 export async function scanPluginSkills(homeDir: string): Promise<ScanResult> {
   const marketplaces = path.join(homeDir, '.claude', 'plugins', 'marketplaces')
   if (!(await exists(marketplaces))) return { skills: [] }
@@ -198,6 +202,8 @@ export async function scanPluginSkills(homeDir: string): Promise<ScanResult> {
   try {
     const skills: SkillRecord[] = []
     const root = path.join(homeDir, '.claude', 'plugins')
+    const enabled = await loadEnabledPlugins(homeDir)
+    if (enabled.size === 0) return { skills }
     // The repo backing each marketplace — used for plugins that ship inside it.
     const marketplaceRepos = await loadMarketplaceRepos(homeDir)
     // marketplace.json is read once per marketplace and reused across its plugins.
@@ -212,7 +218,12 @@ export async function scanPluginSkills(homeDir: string): Promise<ScanResult> {
           const skillsDir = path.join(bucketDir, plugin, 'skills')
           if (!(await exists(skillsDir))) continue
           if (!pluginSources.has(marketplace)) pluginSources.set(marketplace, await loadMarketplacePlugins(marketplaceDir))
-          const source = pluginSources.get(marketplace)!.get(plugin)
+          const sources = pluginSources.get(marketplace)!
+          // Enablement is keyed by the plugin's manifest name, which usually —
+          // but not always — matches its folder; accept either.
+          const names = new Set([plugin, ...manifestNamesForDir(sources, plugin)])
+          if (![...names].some((name) => enabled.has(`${name}@${marketplace}`))) continue
+          const source = sources.get(plugin)
           const originFor = (skillDir: string) =>
             pluginOrigin(source, path.basename(skillDir), marketplaceRepo) ?? undefined
           skills.push(
@@ -225,6 +236,50 @@ export async function scanPluginSkills(homeDir: string): Promise<ScanResult> {
   } catch (error) {
     return { skills: [], error: describe(error) }
   }
+}
+
+/**
+ * The set of `plugin@marketplace` keys enabled on this machine. Claude Code
+ * records enablement in `~/.claude/settings.json` (`enabledPlugins`, with
+ * `settings.local.json` overriding) and installs in
+ * `~/.claude/plugins/installed_plugins.json`; an installed plugin counts as
+ * enabled unless explicitly switched off.
+ */
+async function loadEnabledPlugins(homeDir: string): Promise<Set<string>> {
+  const flags = new Map<string, boolean>()
+  for (const file of ['settings.json', 'settings.local.json']) {
+    try {
+      const data = JSON.parse(await fs.readFile(path.join(homeDir, '.claude', file), 'utf8')) as {
+        enabledPlugins?: Record<string, unknown>
+      }
+      for (const [key, value] of Object.entries(data.enabledPlugins ?? {})) {
+        if (typeof value === 'boolean') flags.set(key, value)
+      }
+    } catch {
+      // Missing or unparseable settings: nothing enabled from this file.
+    }
+  }
+  try {
+    const data = JSON.parse(
+      await fs.readFile(path.join(homeDir, '.claude', 'plugins', 'installed_plugins.json'), 'utf8'),
+    ) as { plugins?: Record<string, unknown> }
+    for (const key of Object.keys(data.plugins ?? {})) {
+      if (!flags.has(key)) flags.set(key, true)
+    }
+  } catch {
+    // No install ledger.
+  }
+  return new Set([...flags.entries()].filter(([, on]) => on).map(([key]) => key))
+}
+
+/** Manifest plugin names whose in-repo source folder is `dir` (e.g. `./plugins/<dir>`). */
+function manifestNamesForDir(sources: Map<string, PluginSource>, dir: string): string[] {
+  const names: string[] = []
+  for (const [name, source] of sources) {
+    const location = typeof source === 'string' ? source : source?.path
+    if (typeof location === 'string' && path.posix.basename(location.replace(/\/+$/, '')) === dir) names.push(name)
+  }
+  return names
 }
 
 /** Map marketplace name → the repo it was cloned from, per `known_marketplaces.json`. */

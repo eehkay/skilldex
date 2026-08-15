@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createConfigStore } from '../config'
 import { createSkillWorkspace, type SkillWorkspace } from '../skill-workspace'
+import { makeZip } from './zip-fixture'
 
 let home: string
 let workspaceRoot: string
@@ -28,11 +29,15 @@ beforeEach(async () => {
   await writeSkill(sharedReal, 'shared', 'Shared skill.')
   await fs.symlink(sharedReal, path.join(home, '.claude', 'skills', 'shared'))
 
-  // Plugin skill
-  await writeSkill(
-    path.join(home, '.claude', 'plugins', 'marketplaces', 'mkt', 'plugins', 'p1', 'skills', 'gamma'),
-    'gamma',
-    'A plugin skill.',
+  // Plugin skills: p1 is enabled; p2 sits in the marketplace catalog but is
+  // not installed; p3 is installed but explicitly switched off.
+  const marketplace = path.join(home, '.claude', 'plugins', 'marketplaces', 'mkt')
+  await writeSkill(path.join(marketplace, 'plugins', 'p1', 'skills', 'gamma'), 'gamma', 'A plugin skill.')
+  await writeSkill(path.join(marketplace, 'plugins', 'p2', 'skills', 'catalog-only'), 'catalog-only', 'Not installed.')
+  await writeSkill(path.join(marketplace, 'plugins', 'p3', 'skills', 'switched-off'), 'switched-off', 'Disabled.')
+  await fs.writeFile(
+    path.join(home, '.claude', 'settings.json'),
+    JSON.stringify({ enabledPlugins: { 'p1@mkt': true, 'p3@mkt': false } }),
   )
 
   // Project skills under a workspace directory
@@ -56,6 +61,9 @@ describe('SkillWorkspace', () => {
     expect(names).toContain('beta')
     expect(names).toContain('gamma')
     expect(snapshot.skills.find((s) => s.name === 'gamma')?.sourceKind).toBe('Plugin')
+    // Marketplace catalog entries that aren't enabled don't count as installed.
+    expect(names).not.toContain('catalog-only')
+    expect(names).not.toContain('switched-off')
   })
 
   it('tildifies source roots for display', async () => {
@@ -251,6 +259,40 @@ describe('SkillWorkspace', () => {
       const gamma = snapshot.skills.find((s) => s.name === 'gamma')!
       await expect(workspace.disableSkill(gamma.id)).rejects.toThrow(/plugin/i)
       await expect(workspace.removeSkill(gamma.id)).rejects.toThrow(/plugin/i)
+    })
+
+    it('imports a zipped skill into the global root or a project', async () => {
+      const zip = makeZip({
+        'pdf-filler/SKILL.md': '---\nname: pdf-filler\ndescription: Fills PDFs\n---\n',
+        'pdf-filler/scripts/fill.py': 'print(1)',
+      })
+      const data = zip.toString('base64')
+
+      const global = await workspace.importSkillArchive({ fileName: 'pdf-filler.zip', data, scope: 'global' })
+      const imported = global.skills.find((s) => s.name === 'pdf-filler')
+      expect(imported?.sourceKind).toBe('Personal')
+      await expect(
+        fs.readFile(path.join(home, '.claude', 'skills', 'pdf-filler', 'scripts', 'fill.py'), 'utf8'),
+      ).resolves.toBe('print(1)')
+
+      // Same folder again is a conflict, not a silent overwrite.
+      await expect(
+        workspace.importSkillArchive({ fileName: 'pdf-filler.zip', data, scope: 'global' }),
+      ).rejects.toThrow('already exists')
+
+      await workspace.configureSources({ ...(await workspace.getConfig()), projectRoots: [workspaceRoot] })
+      const project = await workspace.importSkillArchive({
+        fileName: 'pdf-filler.zip',
+        data,
+        scope: 'project',
+        projectName: 'proj1',
+      })
+      const inProject = project.skills.filter((s) => s.name === 'pdf-filler')
+      expect(inProject.some((s) => s.sourceKind === 'Project' && s.projects.includes('proj1'))).toBe(true)
+
+      await expect(
+        workspace.importSkillArchive({ fileName: 'nope.zip', data: Buffer.from('nope').toString('base64'), scope: 'global' }),
+      ).rejects.toThrow('Not a zip archive')
     })
 
     it('creates a global skill', async () => {

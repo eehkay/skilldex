@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Server } from 'lucide-react'
-import { scopePillClass, shortRef, type MachineSnapshot, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillFile } from '../model/skills'
+import { CATEGORY_LABELS, CATEGORY_ORDER, scopePillClass, shortRef, type MachineSnapshot, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillCategory, type SkillFile } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
 
@@ -16,6 +16,7 @@ type SkillDetailProps = {
   onRemove: () => void
   onSetSyndication: (input: SetSyndicationInput) => Promise<void>
   onSetSkillEnabled: (input: SetSkillEnabledInput) => Promise<void>
+  onSetCategory: (category: SkillCategory | null) => Promise<void>
   onBack: () => void
 }
 
@@ -27,7 +28,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onBack }: SkillDetailProps) {
+export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onSetCategory, onBack }: SkillDetailProps) {
   const [tab, setTab] = useState<Tab>('instructions')
   const [readme, setReadme] = useState<string | null>(null)
   const [files, setFiles] = useState<SkillFile[] | null>(null)
@@ -208,6 +209,37 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
             <span className="truncate text-right font-mono text-[12.5px] text-[#e4e4e7]">{row.value}</span>
           </div>
         ))}
+
+        {skill.scope === 'global' && (
+          <>
+            <div className="mb-2.5 mt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#52525b]">
+              Category
+            </div>
+            <select
+              value={skill.library?.category ?? ''}
+              onChange={(event) => void onSetCategory((event.target.value || null) as SkillCategory | null)}
+              className="h-9 w-full rounded-[9px] border border-[#27272a] bg-[#0c0c0e] px-3 text-[12.5px] text-[#e4e4e7] outline-none focus:border-[#3a3a42]"
+            >
+              <option value="">Uncategorized</option>
+              {CATEGORY_ORDER.map((key) => (
+                <option key={key} value={key}>
+                  {CATEGORY_LABELS[key]}
+                </option>
+              ))}
+            </select>
+            {skill.library?.category && skill.library.categorySource && (
+              <div className="mt-1.5 text-[11px] text-[#52525b]">
+                {skill.library.categorySource === 'manual'
+                  ? 'Set by you — auto-categorize will not change it.'
+                  : `Assigned ${skill.library.categorySource === 'llm' ? 'by Claude' : 'from repo structure'}${
+                      typeof skill.library.categoryConfidence === 'number'
+                        ? ` (${Math.round(skill.library.categoryConfidence * 100)}% confident)`
+                        : ''
+                    }. Choose one to lock it in.`}
+              </div>
+            )}
+          </>
+        )}
 
         <div className="mb-2.5 mt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#52525b]">
           Installed at

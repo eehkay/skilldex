@@ -46,13 +46,35 @@ export type SyndicationTarget = {
 
 /** A library entry: where a skill was imported from and where it goes. */
 export type LibrarySkillMeta = {
-  /** `owner/repo` slug the skill was imported from. */
+  /**
+   * `owner/repo` slug the skill was imported from. Empty for skills adopted
+   * from a machine with no known origin — they have no repo to update from.
+   */
   repo: string
   /** Directory path within the repo ('' for a root-level skill). */
   path: string
   /** Pinned ref (commit sha when available) the library copy was taken at. */
   ref: string
   targets: SyndicationTarget[]
+  /** Machine the skill was adopted from, when it entered the library that way. */
+  adoptedFrom?: string
+  /** Library category; absent until categorized. */
+  category?: SkillCategory
+  /** Where the category came from — 'manual' is never overwritten by re-runs. */
+  categorySource?: 'llm' | 'structural' | 'manual'
+  categoryConfidence?: number
+}
+
+/** One machine's library compared against the hub library, by folder name. */
+export type MachineDiff = {
+  machine: MachineRecord
+  /** On the machine but not in the library — candidates to adopt. */
+  onlyOnMachine: SkillRecord[]
+  /** In the library but not on the machine — candidates to install. */
+  onlyInLibrary: SkillRecord[]
+  /** Present in both (by folder name). */
+  inSync: number
+  error?: string
 }
 
 export type SkillFile = {
@@ -130,9 +152,23 @@ export type WorkspaceConfig = {
    * gets symlinks into its own layout (e.g. codex → `~/.codex/skills`).
    */
   agents: SkillAgent[]
+  /** Anthropic API key for LLM categorization; absent → structural layer only. */
+  anthropicApiKey?: string
 }
 
 export type SkillAgent = 'claude' | 'codex'
+
+/** Fixed library taxonomy — see categorizer.ts for labels and hints. */
+export type SkillCategory =
+  | 'marketing'
+  | 'content'
+  | 'analytics'
+  | 'design'
+  | 'dev'
+  | 'agents'
+  | 'business'
+  | 'documents'
+  | 'research'
 
 /** A remote machine the hub manages over (Tailscale) SSH. */
 export type MachineRecord = {
@@ -157,6 +193,16 @@ export type CreateSkillInput = {
   description: string
   scope: 'global' | 'project'
   /** Project directory name (from a ProjectRecord); required when scope is 'project'. */
+  projectName?: string
+}
+
+/** A zipped skill uploaded from the UI, to be unpacked into a skills root. */
+export type ImportSkillArchiveInput = {
+  /** Original filename (names a root-level skill with no frontmatter `name`). */
+  fileName: string
+  /** Archive bytes, base64-encoded (rides the same JSON path over IPC and HTTP). */
+  data: string
+  scope: 'global' | 'project'
   projectName?: string
 }
 

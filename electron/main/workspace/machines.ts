@@ -65,6 +65,12 @@ export type MachineUninstallInput = {
 
 export type MachineSetEnabledInput = MachineUninstallInput & { enabled: boolean }
 
+/** A skill's files as shipped back by the agent's read-skill command. */
+export type MachineSkillFiles = {
+  skill: import('./types').SkillRecord
+  files: Array<{ path: string; base64: string }>
+}
+
 const AGENT_REMOTE = '~/.skilldex-agent.js'
 const HASH_TIMEOUT = 15_000
 const PUSH_TIMEOUT = 30_000
@@ -79,6 +85,13 @@ export type MachineManager = {
   uninstall(machine: MachineRecord, input: MachineUninstallInput): Promise<WorkspaceSnapshot>
   /** Enable/disable a skill by folder name (idempotent). */
   setEnabled(machine: MachineRecord, input: MachineSetEnabledInput): Promise<WorkspaceSnapshot>
+  /** Read a machine skill's files (for adopting it into the library). */
+  readSkill(machine: MachineRecord, id: string): Promise<MachineSkillFiles>
+  /** Write a skill's files onto a machine (global scope; refuses to overwrite). */
+  writeSkill(
+    machine: MachineRecord,
+    input: { dirName: string; files: Array<{ path: string; base64: string }> },
+  ): Promise<WorkspaceSnapshot>
   skillOp(machine: MachineRecord, op: 'enable' | 'disable' | 'remove', id: string): Promise<WorkspaceSnapshot>
 }
 
@@ -196,6 +209,14 @@ export function createMachineManager({
 
     setEnabled(machine, input) {
       return agentCall<WorkspaceSnapshot>(machine, 'set-enabled', { input, timeoutMs: SNAPSHOT_TIMEOUT })
+    },
+
+    readSkill(machine, id) {
+      return agentCall<MachineSkillFiles>(machine, 'read-skill', { input: { id }, timeoutMs: INSTALL_TIMEOUT })
+    },
+
+    writeSkill(machine, input) {
+      return agentCall<WorkspaceSnapshot>(machine, 'write-skill', { input, timeoutMs: INSTALL_TIMEOUT })
     },
 
     skillOp(machine, op, id) {
