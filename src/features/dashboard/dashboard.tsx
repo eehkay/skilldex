@@ -394,11 +394,26 @@ export function Dashboard() {
         repoSlug={activeRepo ?? ''}
         targets={installTargets}
         onClose={() => setInstallTarget(null)}
-        onInstall={async ({ targetKey, scope, projectName }) => {
+        onInstall={async ({ targetKeys, scope, projectName }) => {
           if (!installTarget || !activeRepo) return
-          const input = { repo: activeRepo, skillId: installTarget.id, scope, projectName }
-          if (targetKey === 'local') await installRepoSkill(input)
-          else await installOnMachine(targetKey, input)
+          const base = { repo: activeRepo, skillId: installTarget.id }
+          // Importing to the library always happens; a checked local target
+          // with project scope additionally places a copy in that project.
+          const localProject = targetKeys.includes('local') && scope === 'project'
+          await installRepoSkill(
+            localProject ? { ...base, scope: 'project', projectName } : { ...base, scope: 'global' },
+          )
+          // Then fan out to the checked machines, remembering every failure
+          // so one offline machine doesn't hide the rest.
+          const failures: string[] = []
+          for (const key of targetKeys.filter((target) => target !== 'local')) {
+            try {
+              await installOnMachine(key, { ...base, scope, projectName })
+            } catch (cause) {
+              failures.push(cause instanceof Error ? cause.message : String(cause))
+            }
+          }
+          if (failures.length > 0) throw new Error(failures.join(' · '))
         }}
       />
 
