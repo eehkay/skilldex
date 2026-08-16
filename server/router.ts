@@ -18,6 +18,15 @@ import type { SkillCategory, WorkspaceConfig } from '../electron/main/workspace/
 
 type Handler = (query: URLSearchParams, body: Record<string, unknown>) => Promise<unknown>
 
+/**
+ * Mutation payloads may be wrapped (`{input: {...}}`, what the UI sends) or
+ * bare (what an agent hand-writes); accept both everywhere. Validation of the
+ * fields themselves happens in the workspace, which throws friendly errors.
+ */
+function inputOf(body: Record<string, unknown>): never {
+  return (body.input ?? body) as never
+}
+
 export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler> {
   const id = (query: URLSearchParams, body: Record<string, unknown>) => {
     const value = query.get('id') ?? body.id
@@ -41,17 +50,17 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     ['POST /api/disable-skill', async (q, b) => workspace.disableSkill(id(q, b))],
     ['POST /api/remove-skill', async (q, b) => workspace.removeSkill(id(q, b))],
     ['POST /api/toggle-favourite', async (q, b) => workspace.toggleFavourite(id(q, b))],
-    ['POST /api/create-skill', async (_q, body) => workspace.createSkill(body.input as never)],
-    ['POST /api/import-skill-archive', async (_q, body) => workspace.importSkillArchive(body.input as never)],
+    ['POST /api/create-skill', async (_q, body) => workspace.createSkill(inputOf(body))],
+    ['POST /api/import-skill-archive', async (_q, body) => workspace.importSkillArchive(inputOf(body))],
     // Agent-facing: upload a skill as loose files, look one up by name, push it to machines.
-    ['POST /api/import-skill-files', async (_q, body) => workspace.importSkillFiles((body.input ?? body) as never)],
+    ['POST /api/import-skill-files', async (_q, body) => workspace.importSkillFiles(inputOf(body))],
     ['GET /api/skill', async (q) => {
       const name = q.get('name') ?? q.get('id')
       if (!name) throw new Error('Missing skill name (?name=).')
       const flag = q.get('machines')
       return workspace.findSkill(name, { machines: !(flag === '0' || flag === 'false') })
     }],
-    ['POST /api/distribute', async (_q, body) => workspace.distributeSkill((body.input ?? body) as never)],
+    ['POST /api/distribute', async (_q, body) => workspace.distributeSkill(inputOf(body))],
     ['GET /api/repos', async () => workspace.listRepoCatalogs()],
     ['POST /api/add-repo', async (_q, body) => {
       if (typeof body.input !== 'string') throw new Error('Missing repo input.')
@@ -65,7 +74,7 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
       if (typeof body.slug !== 'string') throw new Error('Missing repo slug.')
       return workspace.refreshSkillRepo(body.slug)
     }],
-    ['POST /api/install-repo-skill', async (_q, body) => workspace.installRepoSkill(body.input as never)],
+    ['POST /api/install-repo-skill', async (_q, body) => workspace.installRepoSkill(inputOf(body))],
     // Browser mode has no native directory picker; the UI sends a typed path
     // and we confirm it exists on the hub before it is added as a source.
     ['POST /api/validate-directory', async (_q, body) => {
@@ -88,10 +97,10 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     }],
     ['POST /api/machine-install', async (_q, body) => {
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
-      return workspace.installOnMachine(body.name, body.input as never)
+      return workspace.installOnMachine(body.name, inputOf(body))
     }],
-    ['POST /api/set-syndication', async (_q, body) => workspace.setSyndication(body.input as never)],
-    ['POST /api/set-skill-enabled', async (_q, body) => workspace.setSkillEnabled(body.input as never)],
+    ['POST /api/set-syndication', async (_q, body) => workspace.setSyndication(inputOf(body))],
+    ['POST /api/set-skill-enabled', async (_q, body) => workspace.setSkillEnabled(inputOf(body))],
     ['GET /api/machine-diff', async (q) => {
       const name = q.get('name')
       if (!name) throw new Error('Missing machine name.')

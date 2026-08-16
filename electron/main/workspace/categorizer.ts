@@ -14,6 +14,7 @@
  * The Anthropic client is injected so tests drive the module with a fake.
  */
 
+import { mapWithConcurrency } from './concurrency'
 import type { SkillCategory } from './types'
 
 export const CATEGORIES: ReadonlyArray<{ id: SkillCategory; label: string; hint: string }> = [
@@ -107,21 +108,54 @@ export async function categorizeSkills(
   }
   if (!client || remaining.length === 0) return result
 
-  for (let start = 0; start < remaining.length; start += BATCH_SIZE) {
-    const batch = remaining.slice(start, start + BATCH_SIZE)
-    const answers = await client.classify({
-      skills: batch.map(({ name, description }) => ({ name, description })),
+  // Batches are independent; run a few at a time so a big library isn't a
+  // long serial chain of LLM calls, without hammering the provider.
+  const batches: Array<typeof remaining> = []
+  for (let start = 0; start < remaining.length; start += BATCH_SIZE) batches.push(remaining.slice(start, start + BATCH_SIZE))
+  const answers = await mapWithConcurrency(batches, LLM_CONCURRENCY, (batch) =>
+    client.classify({ skills: batch.map(({ name, description }) => ({ name, description })) }),
+  )
+  for (const answer of answers.flat()) {
+    if (!CATEGORY_IDS.includes(answer.category as SkillCategory)) continue
+    result.set(answer.name, {
+      category: answer.category as SkillCategory,
+      confidence: Math.max(0, Math.min(1, answer.confidence)),
+      source: 'llm',
     })
-    for (const answer of answers) {
-      if (!CATEGORY_IDS.includes(answer.category as SkillCategory)) continue
-      result.set(answer.name, {
-        category: answer.category as SkillCategory,
-        confidence: Math.max(0, Math.min(1, answer.confidence)),
-        source: 'llm',
-      })
-    }
   }
   return result
+}
+
+const LLM_CONCURRENCY = 3
+
+// ---- Prompt shared by every provider; only the transport differs. ----
+
+type RawAssignment = { name: string; category: string; confidence: number }
+
+const SYSTEM_PROMPT =
+  'You categorize coding-agent skills into a fixed taxonomy. Each skill has a name and a description written to tell an agent when to use it. Assign exactly one category per skill from the taxonomy — the best single fit for what the skill is primarily for — and a confidence from 0 to 1. Prefer the category a person browsing a library would look under. Return every skill you were given, in any order, using its exact name.'
+
+/** Extra instruction for providers without enforced JSON schema output. */
+const JSON_SHAPE_HINT =
+  ' Respond with ONLY a JSON object of the shape {"assignments":[{"name":string,"category":string,"confidence":number}]}, including every skill given, using each exact name. Category must be one of the taxonomy ids.'
+
+function buildClassifierPrompt(skills: Array<{ name: string; description: string }>): { system: string; user: string } {
+  const taxonomy = CATEGORIES.map((category) => `- ${category.id}: ${category.label} — ${category.hint}`).join('\n')
+  const listing = skills
+    .map((skill, index) => `${index + 1}. name: ${skill.name}\n   description: ${skill.description || '(none)'}`)
+    .join('\n')
+  return { system: SYSTEM_PROMPT, user: `Taxonomy:\n${taxonomy}\n\nSkills:\n${listing}` }
+}
+
+/** Parse a model reply into assignments; tolerant of code fences, never throws. */
+function parseAssignments(text: string): RawAssignment[] {
+  const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  try {
+    const parsed = JSON.parse(raw) as { assignments?: RawAssignment[] }
+    return Array.isArray(parsed.assignments) ? parsed.assignments : []
+  } catch {
+    return []
+  }
 }
 
 /** Build the real classifier on top of the Anthropic SDK. */
@@ -132,10 +166,7 @@ export function createAnthropicClassifier(apiKey: string): ClassifierClient {
     async classify({ skills }) {
       const { default: Anthropic } = await import('@anthropic-ai/sdk')
       const client = new Anthropic({ apiKey })
-      const taxonomy = CATEGORIES.map((category) => `- ${category.id}: ${category.label} — ${category.hint}`).join('\n')
-      const listing = skills
-        .map((skill, index) => `${index + 1}. name: ${skill.name}\n   description: ${skill.description || '(none)'}`)
-        .join('\n')
+      const prompt = buildClassifierPrompt(skills)
 
       const response = await client.messages.create({
         model: 'claude-opus-5',
@@ -166,23 +197,14 @@ export function createAnthropicClassifier(apiKey: string): ClassifierClient {
             },
           },
         },
-        system:
-          'You categorize coding-agent skills into a fixed taxonomy. Each skill has a name and a description written to tell an agent when to use it. Assign exactly one category per skill from the taxonomy — the best single fit for what the skill is primarily for — and a confidence from 0 to 1. Prefer the category a person browsing a library would look under. Return every skill you were given, in any order, using its exact name.',
-        messages: [
-          {
-            role: 'user',
-            content: `Taxonomy:\n${taxonomy}\n\nSkills:\n${listing}`,
-          },
-        ],
+        system: prompt.system,
+        messages: [{ role: 'user', content: prompt.user }],
       })
 
       if (response.stop_reason === 'refusal') return []
       const text = response.content.find((block) => block.type === 'text')
       if (!text || text.type !== 'text') return []
-      const parsed = JSON.parse(text.text) as {
-        assignments: Array<{ name: string; category: string; confidence: number }>
-      }
-      return parsed.assignments
+      return parseAssignments(text.text)
     },
   }
 }
@@ -196,11 +218,7 @@ export function createAnthropicClassifier(apiKey: string): ClassifierClient {
 export function createOpenRouterClassifier(apiKey: string, model = 'anthropic/claude-haiku-4.5'): ClassifierClient {
   return {
     async classify({ skills }) {
-      const taxonomy = CATEGORIES.map((category) => `- ${category.id}: ${category.label} — ${category.hint}`).join('\n')
-      const listing = skills
-        .map((skill, index) => `${index + 1}. name: ${skill.name}\n   description: ${skill.description || '(none)'}`)
-        .join('\n')
-
+      const prompt = buildClassifierPrompt(skills)
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -214,12 +232,8 @@ export function createOpenRouterClassifier(apiKey: string, model = 'anthropic/cl
           temperature: 0,
           response_format: { type: 'json_object' },
           messages: [
-            {
-              role: 'system',
-              content:
-                'You categorize coding-agent skills into a fixed taxonomy. Each skill has a name and a description written to tell an agent when to use it. Assign exactly one category per skill from the taxonomy — the best single fit for what the skill is primarily for — and a confidence from 0 to 1. Prefer the category a person browsing a library would look under. Respond with ONLY a JSON object of the shape {"assignments":[{"name":string,"category":string,"confidence":number}]}, including every skill given, using each exact name. Category must be one of the taxonomy ids.',
-            },
-            { role: 'user', content: `Taxonomy:\n${taxonomy}\n\nSkills:\n${listing}` },
+            { role: 'system', content: prompt.system + JSON_SHAPE_HINT },
+            { role: 'user', content: prompt.user },
           ],
         }),
       })
@@ -230,11 +244,7 @@ export function createOpenRouterClassifier(apiKey: string, model = 'anthropic/cl
       const data = (await response.json()) as {
         choices?: Array<{ message?: { content?: string } }>
       }
-      const content = data.choices?.[0]?.message?.content ?? ''
-      // Some models wrap JSON in fences despite json_object; strip defensively.
-      const raw = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const parsed = JSON.parse(raw) as { assignments?: Array<{ name: string; category: string; confidence: number }> }
-      return Array.isArray(parsed.assignments) ? parsed.assignments : []
+      return parseAssignments(data.choices?.[0]?.message?.content ?? '')
     },
   }
 }

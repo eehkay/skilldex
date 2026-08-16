@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, Check, Download, FileText, Link2, ListTree, Loader2, RefreshCw, Trash2 } from 'lucide-react'
-import { iconColorsFor, monoFor, type RepoCatalog, type RepoSkill, type Skill } from '@/features/skills/model/skills'
+import { dirNameOf, iconColorsFor, monoFor, type RepoCatalog, type RepoSkill, type Skill } from '@/features/skills/model/skills'
 
 type RepoBrowserProps = {
   catalog: RepoCatalog
@@ -30,7 +30,7 @@ export function RepoBrowser({
   // A catalog skill counts as installed when a local skill folder shares its
   // directory name — the name the install flow itself would use.
   const installedDirs = useMemo(
-    () => new Set(localSkills.map((skill) => skill.realPath.split('/').filter(Boolean).pop() ?? '')),
+    () => new Set(localSkills.map((skill) => dirNameOf(skill.realPath))),
     [localSkills],
   )
 
@@ -113,7 +113,7 @@ export function RepoBrowser({
         ) : (
           <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {visible.map((skill) => {
-              const dirName = skill.path.split('/').filter(Boolean).pop() ?? skill.name
+              const dirName = dirNameOf(skill.path) || skill.name
               const installed = installedDirs.has(dirName)
               const colors = iconColorsFor(skill.id)
               return (

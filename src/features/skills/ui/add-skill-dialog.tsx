@@ -1,6 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react'
 import { FileArchive, Globe, Layers, Loader2, Upload, X } from 'lucide-react'
-import type { CreateSkillInput, ImportSkillArchiveInput, ProjectRecord } from '../model/skills'
+import { formatSize, type CreateSkillInput, type ImportSkillArchiveInput, type ProjectRecord } from '../model/skills'
 
 type Mode = 'import' | 'create'
 
@@ -148,7 +148,7 @@ export function AddSkillDialog({ projects, onClose, onImport, onCreate }: AddSki
                       <>
                         <span className="block truncate text-[13.5px] font-medium text-[#e4e4e7]">{file.name}</span>
                         <span className="block text-[11.5px] text-[#71717a]">
-                          {formatBytes(file.size)} · click or drop to replace
+                          {formatSize(file.size)} · click or drop to replace
                         </span>
                       </>
                     ) : (
@@ -302,12 +302,6 @@ function ScopeOption({
       <div className="mt-1.5 text-[11.5px] leading-snug text-[#71717a]">{detail}</div>
     </button>
   )
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
 /** Base64-encode a File in chunks (avoids blowing the argument limit on large archives). */

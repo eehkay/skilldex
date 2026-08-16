@@ -13,6 +13,9 @@ type SettingsDialogProps = {
 }
 
 export function SettingsDialog({ open, config, homeDir, onClose, onConfigure, onPickDirectory }: SettingsDialogProps) {
+  // Mirrors createClassifierFromConfig's fallback (explicit choice, else
+  // whichever key is present) so the highlighted provider matches the one used.
+  const activeProvider = config?.categorizerProvider ?? (config?.openRouterApiKey ? 'openrouter' : 'anthropic')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   if (!open) return null
@@ -164,7 +167,7 @@ export function SettingsDialog({ open, config, homeDir, onClose, onConfigure, on
             </div>
             <div className="mt-3 flex gap-2">
               {(['anthropic', 'openrouter'] as const).map((provider) => {
-                const active = (config?.categorizerProvider ?? (config?.openRouterApiKey ? 'openrouter' : 'anthropic')) === provider
+                const active = activeProvider === provider
                 return (
                   <button
                     key={provider}
@@ -182,7 +185,7 @@ export function SettingsDialog({ open, config, homeDir, onClose, onConfigure, on
                 )
               })}
             </div>
-            {(config?.categorizerProvider ?? (config?.openRouterApiKey ? 'openrouter' : 'anthropic')) === 'openrouter' ? (
+            {activeProvider === 'openrouter' ? (
               <>
                 <ApiKeyField
                   value={config?.openRouterApiKey ?? ''}

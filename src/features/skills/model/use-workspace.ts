@@ -203,18 +203,23 @@ export function useWorkspace(): WorkspaceState {
     }
   }, [])
 
-  const patchMachine = useCallback(async (op: () => Promise<MachineSnapshot> | undefined) => {
-    setMachinesLoading(true)
-    try {
-      const next = await op()
-      if (next)
-        setMachineSnapshots((current) =>
-          current.map((entry) => (entry.machine.name === next.machine.name ? next : entry)),
-        )
-    } finally {
-      setMachinesLoading(false)
-    }
+  /** Swap one machine's entry in place (by name). */
+  const replaceMachine = useCallback((next: MachineSnapshot) => {
+    setMachineSnapshots((current) => current.map((entry) => (entry.machine.name === next.machine.name ? next : entry)))
   }, [])
+
+  const patchMachine = useCallback(
+    async (op: () => Promise<MachineSnapshot> | undefined) => {
+      setMachinesLoading(true)
+      try {
+        const next = await op()
+        if (next) replaceMachine(next)
+      } finally {
+        setMachinesLoading(false)
+      }
+    },
+    [replaceMachine],
+  )
 
   const addMachine = useCallback(
     (machine: MachineRecord) => mutateMachines(() => bridge()?.addMachine(machine)),
@@ -287,14 +292,12 @@ export function useWorkspace(): WorkspaceState {
       const result = await bridge()?.convergeMachine(name, dirNames)
       if (!result) return null
       setSnapshot(result.workspace)
-      setMachineSnapshots((current) =>
-        current.map((entry) => (entry.machine.name === result.machine.machine.name ? result.machine : entry)),
-      )
+      replaceMachine(result.machine)
       return { installed: result.installed, failed: result.failed }
     } finally {
       setMachinesLoading(false)
     }
-  }, [])
+  }, [replaceMachine])
 
   const getLogs = useCallback(async (limit?: number) => (await bridge()?.getLogs(limit)) ?? [], [])
 
@@ -304,14 +307,12 @@ export function useWorkspace(): WorkspaceState {
       const result = await bridge()?.clearMachine(name, dirNames)
       if (!result) return null
       setSnapshot(result.workspace)
-      setMachineSnapshots((current) =>
-        current.map((entry) => (entry.machine.name === result.machine.machine.name ? result.machine : entry)),
-      )
+      replaceMachine(result.machine)
       return { removed: result.removed, failed: result.failed, kept: result.kept }
     } finally {
       setMachinesLoading(false)
     }
-  }, [])
+  }, [replaceMachine])
 
   const categorizeLibrary = useCallback(async (options?: { force?: boolean }) => {
     setLoading(true)
@@ -341,16 +342,12 @@ export function useWorkspace(): WorkspaceState {
       const result = await bridge()?.setSyndication(input)
       if (result) {
         setSnapshot(result.workspace)
-        setMachineSnapshots((current) =>
-          current.map((entry) =>
-            entry.machine.name === result.machine.machine.name ? result.machine : entry,
-          ),
-        )
+        replaceMachine(result.machine)
       }
     } finally {
       setMachinesLoading(false)
     }
-  }, [])
+  }, [replaceMachine])
 
   useEffect(() => {
     void rescan()

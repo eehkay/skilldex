@@ -27,11 +27,11 @@ import {
   fetchRepoCatalog,
   type FetchLike,
 } from '../electron/main/workspace/repo-catalog'
+import { packSkillFiles } from '../electron/main/workspace/filesystem-source'
+import { writeSkillArchive } from '../electron/main/workspace/skill-archive'
 import {
-  clearDanglingSkillPath,
   disableSkillDir,
   enableSkillDir,
-  inspectSkillPath,
   removeSkillDir,
   slugify,
 } from '../electron/main/workspace/skill-manager'
@@ -157,13 +157,7 @@ async function main(): Promise<void> {
       const snapshot = await workspace.getSnapshot()
       const skill = snapshot.skills.find((entry) => entry.id === id)
       if (!skill) throw new Error(`Unknown skill on this machine: ${id}`)
-      const files = (await workspace.listSkillFiles(id)) ?? []
-      const payload: Array<{ path: string; base64: string }> = []
-      for (const file of files) {
-        const buffer = await fs.readFile(path.join(skill.realPath, ...file.relativePath.split('/')))
-        payload.push({ path: file.relativePath, base64: buffer.toString('base64') })
-      }
-      emit({ skill, files: payload })
+      emit({ skill, files: await packSkillFiles(skill.realPath) })
       return
     }
     case 'write-skill': {
@@ -175,26 +169,13 @@ async function main(): Promise<void> {
       }
       if (path.basename(input.dirName) !== input.dirName || input.dirName.startsWith('.'))
         throw new Error(`Invalid skill folder name: ${input.dirName}`)
+      // Same writer the hub uses for imports: replaces a dangling symlink,
+      // refuses a real entry, rejects unsafe paths, stages + renames atomically.
       const root = path.join(homeDir, '.claude', 'skills')
-      const dest = path.join(root, input.dirName)
-      // A dangling symlink (e.g. left behind by a wiped ~/.agents/skills) is
-      // debris, not a skill — replace it. A real entry is protected.
-      const state = await inspectSkillPath(dest)
-      if (state === 'present') throw new Error(`A skill named "${input.dirName}" already exists on this machine.`)
-      if (state === 'dangling') await clearDanglingSkillPath(dest)
-      await fs.mkdir(dest, { recursive: true })
-      try {
-        for (const file of input.files) {
-          const rel = path.posix.normalize(file.path)
-          if (rel.startsWith('..') || path.posix.isAbsolute(rel)) throw new Error(`Invalid file path: ${file.path}`)
-          const target = path.join(dest, ...rel.split('/'))
-          await fs.mkdir(path.dirname(target), { recursive: true })
-          await fs.writeFile(target, Buffer.from(file.base64, 'base64'))
-        }
-      } catch (cause) {
-        await fs.rm(dest, { recursive: true, force: true }).catch(() => {})
-        throw cause
-      }
+      await writeSkillArchive(root, {
+        dirName: input.dirName,
+        files: input.files.map((file) => ({ path: file.path, data: Buffer.from(file.base64, 'base64') })),
+      })
       emit(await workspace.getSnapshot())
       return
     }

@@ -17,6 +17,12 @@ export type LibraryStore = {
   load(): Promise<Record<string, LibrarySkillMeta>>
   /** Merge-set one entry (null removes it). Returns the updated ledger. */
   set(name: string, meta: LibrarySkillMeta | null): Promise<Record<string, LibrarySkillMeta>>
+  /**
+   * Apply many changes with one read and one write. The mutator edits the
+   * ledger in place (delete a key to remove it). Use this for per-skill loops
+   * instead of N `set` calls.
+   */
+  update(mutate: (skills: Record<string, LibrarySkillMeta>) => void): Promise<Record<string, LibrarySkillMeta>>
 }
 
 export function createLibraryStore(filePath: string): LibraryStore {
@@ -29,29 +35,47 @@ export function createLibraryStore(filePath: string): LibraryStore {
     }
   }
 
-  return {
-    load,
-    async set(name, meta) {
+  // Serialize writers within this process: two overlapping load→write cycles
+  // would otherwise lose one's changes and race on the same tmp path.
+  let queue: Promise<unknown> = Promise.resolve()
+  let counter = 0
+  function write(mutate: (skills: Record<string, LibrarySkillMeta>) => void): Promise<Record<string, LibrarySkillMeta>> {
+    const job = queue.then(async () => {
       const skills = await load()
-      if (meta === null) delete skills[name]
-      else skills[name] = meta
+      mutate(skills)
       await fs.mkdir(path.dirname(filePath), { recursive: true })
-      const tmp = `${filePath}.${process.pid}.tmp`
+      const tmp = `${filePath}.${process.pid}.${counter++}.tmp`
       await fs.writeFile(tmp, JSON.stringify({ skills }, null, 2), 'utf8')
       await fs.rename(tmp, filePath)
       return skills
-    },
+    })
+    queue = job.catch(() => {})
+    return job
+  }
+
+  return {
+    load,
+    set: (name, meta) =>
+      write((skills) => {
+        if (meta === null) delete skills[name]
+        else skills[name] = meta
+      }),
+    update: write,
   }
 }
 
 /** An in-memory store for tests and callers that don't persist a library. */
 export function createMemoryLibraryStore(): LibraryStore {
-  let skills: Record<string, LibrarySkillMeta> = {}
+  const skills: Record<string, LibrarySkillMeta> = {}
   return {
     load: async () => ({ ...skills }),
     set: async (name, meta) => {
       if (meta === null) delete skills[name]
       else skills[name] = meta
+      return { ...skills }
+    },
+    update: async (mutate) => {
+      mutate(skills)
       return { ...skills }
     },
   }

@@ -18,6 +18,7 @@ import { createMemoryLibraryStore, type LibraryStore } from './library-store'
 import { favouriteKeyFor } from './favourite-key'
 import {
   listSkillFiles,
+  packSkillFiles,
   resolveProjectDirs,
   scanPersonalSkills,
   scanPluginSkills,
@@ -40,6 +41,7 @@ import {
   inspectSkillPath,
 } from './skill-manager'
 import { createMachineManager, type ExecLike, type MachineManager } from './machines'
+import { mapWithConcurrency } from './concurrency'
 import {
   MAX_ARCHIVE_BYTES,
   MAX_UNPACKED_BYTES,
@@ -645,10 +647,7 @@ export function createSkillWorkspace({
       if (!needle) throw new Error('A skill name is required.')
       const config = await configStore.load()
       const snapshot = await buildSnapshot(config)
-      const matches = (skill: SkillRecord) =>
-        skill.id === needle ||
-        skill.name.toLowerCase() === needle.toLowerCase() ||
-        dirNameOf(skill).toLowerCase() === needle.toLowerCase()
+      const matches = matchesSkillName(needle)
       const library = snapshot.skills.filter(matches)
 
       const includeMachines = options.machines !== false && machineManager !== null && config.machines.length > 0
@@ -669,13 +668,8 @@ export function createSkillWorkspace({
       const snapshot = await buildSnapshot(config)
       const needle = (input.skillId ?? input.name ?? '').trim()
       if (!needle) throw new Error('A skill name or id is required.')
-      const candidates = snapshot.skills.filter(
-        (skill) =>
-          skill.sourceKind === 'Personal' &&
-          (skill.id === needle ||
-            skill.name.toLowerCase() === needle.toLowerCase() ||
-            dirNameOf(skill).toLowerCase() === needle.toLowerCase()),
-      )
+      const matches = matchesSkillName(needle)
+      const candidates = snapshot.skills.filter((skill) => skill.sourceKind === 'Personal' && matches(skill))
       if (candidates.length === 0) throw new Error(`No library skill named "${needle}". Only global (library) skills can be distributed.`)
       if (candidates.length > 1) throw new Error(`"${needle}" is ambiguous; pass skillId (one of ${candidates.map((s) => s.id).join(', ')}).`)
       const dirName = dirNameOf(candidates[0])
@@ -993,21 +987,40 @@ export function createSkillWorkspace({
       const failed: Record<string, string> = {}
 
       logger.info('sync.adopt.start', { machine: name, requested: skillIds.length })
-      for (const id of skillIds) {
-        let label = id
+      // Reads are independent SSH sessions — fetch a few at a time. The local
+      // side (writes, repo scans) then runs in order, and the ledger is
+      // written once at the end.
+      const fetched = await mapWithConcurrency(skillIds, MACHINE_CONCURRENCY, async (id) => {
         try {
-          const { skill, files } = await machines().readSkill(machine, id)
-          label = skill.name
+          return { id, ...(await machines().readSkill(machine, id)), error: null }
+        } catch (cause) {
+          return { id, skill: null, files: [], error: cause instanceof Error ? cause.message : String(cause) }
+        }
+      })
+
+      type Pending = { dirName: string; apply: (existing: LibrarySkillMeta | undefined) => LibrarySkillMeta }
+      const pending: Pending[] = []
+      const target: SyndicationTarget = { machine: name, scope: 'global' }
+
+      for (const item of fetched) {
+        if (item.error !== null || !item.skill) {
+          failed[item.id] = item.error ?? 'Unknown skill on this machine.'
+          logger.warn('sync.adopt.failed', { machine: name, skill: item.id, error: failed[item.id] })
+          continue
+        }
+        const { skill, files } = item
+        let label = skill.name
+        try {
           if (skill.sourceKind !== 'Personal') throw new Error('Only personal (global) skills can be adopted.')
           const dirName = dirNameOf(skill)
+          label = dirName
           const dest = path.join(root, dirName)
           // A disabled library copy still counts as "in the library"; a
-          // dangling link is debris and gets replaced below.
+          // dangling link is debris and gets replaced by the writer.
           const states = await Promise.all(
             [dest, path.join(root, DISABLED_DIR, dirName)].map((candidate) => inspectSkillPath(candidate)),
           )
           const exists = states.includes('present')
-          const target: SyndicationTarget = { machine: name, scope: 'global' }
           logger.debug('sync.adopt.skill', {
             machine: name, skill: dirName, files: files.length, symlink: skill.isSymlink,
             realPath: skill.realPath, origin: skill.origin?.label, existsInLibrary: exists,
@@ -1015,12 +1028,7 @@ export function createSkillWorkspace({
 
           if (exists) {
             // Already in the library — just record that this machine has it.
-            const existing = (await libraryStore.load())[dirName]
-            await libraryStore.set(dirName, {
-              ...EMPTY_META,
-              ...existing,
-              targets: withTarget(existing?.targets ?? [], target),
-            })
+            pending.push({ dirName, apply: (existing) => ({ ...EMPTY_META, ...existing, targets: withTarget(existing?.targets ?? [], target) }) })
             logger.info('sync.adopt.linked', { machine: name, skill: dirName, reason: 'already in library' })
             adopted.push(dirName)
             continue
@@ -1036,20 +1044,10 @@ export function createSkillWorkspace({
             const repoFiles = match && scan.filesBySkill.get(match.id)
             if (match && repoFiles) {
               const pinnedRef = scan.catalog.commitSha ?? scan.catalog.ref
-              await downloadRepoSkill({
-                slug: originRepo,
-                ref: pinnedRef,
-                dir: match.path,
-                files: repoFiles,
-                dest,
-                fetchImpl,
-              })
-              await libraryStore.set(dirName, {
-                repo: originRepo,
-                path: match.path,
-                ref: pinnedRef,
-                targets: [target],
-                adoptedFrom: name,
+              await downloadRepoSkill({ slug: originRepo, ref: pinnedRef, dir: match.path, files: repoFiles, dest, fetchImpl })
+              pending.push({
+                dirName,
+                apply: (existing) => ({ ...EMPTY_META, ...existing, repo: originRepo, path: match.path, ref: pinnedRef, targets: [target], adoptedFrom: name }),
               })
               logger.info('sync.adopt.reimported', { machine: name, skill: dirName, repo: originRepo, ref: pinnedRef })
               adopted.push(dirName)
@@ -1064,15 +1062,9 @@ export function createSkillWorkspace({
             dirName,
             files: files.map((file) => ({ path: file.path, data: Buffer.from(file.base64, 'base64') })),
           })
-          const existing = (await libraryStore.load())[dirName]
-          await libraryStore.set(dirName, {
-            ...EMPTY_META,
-            ...existing,
-            repo: originRepo ?? '',
-            path: '',
-            ref: '',
-            targets: [target],
-            adoptedFrom: name,
+          pending.push({
+            dirName,
+            apply: (existing) => ({ ...EMPTY_META, ...existing, repo: originRepo ?? '', path: '', ref: '', targets: [target], adoptedFrom: name }),
           })
           logger.info('sync.adopt.copied', { machine: name, skill: dirName, files: files.length })
           adopted.push(dirName)
@@ -1081,6 +1073,12 @@ export function createSkillWorkspace({
           failed[label] = message
           logger.warn('sync.adopt.failed', { machine: name, skill: label, error: message })
         }
+      }
+
+      if (pending.length > 0) {
+        await libraryStore.update((skills) => {
+          for (const entry of pending) skills[entry.dirName] = entry.apply(skills[entry.dirName])
+        })
       }
 
       logger.info('sync.adopt.done', { machine: name, adopted: adopted.length, failed: Object.keys(failed).length })
@@ -1094,53 +1092,51 @@ export function createSkillWorkspace({
       if (diff.error) throw new Error(diff.error)
       const wanted = new Set(dirNames ?? diff.onlyInLibrary.map(dirNameOf))
       const ledger = await libraryStore.load()
-      const installed: string[] = []
-      const failed: Record<string, string> = {}
-      let snapshot: WorkspaceSnapshot | null = null
+      const target: SyndicationTarget = { machine: name, scope: 'global' }
+      const todo = diff.onlyInLibrary.filter((skill) => wanted.has(dirNameOf(skill)))
 
-      for (const skill of diff.onlyInLibrary) {
+      // Installs are independent SSH sessions; run a few at once. The ledger
+      // is written once afterwards, and one fresh snapshot replaces the
+      // per-install rescans the agent used to ship back.
+      const outcomes = await mapWithConcurrency(todo, MACHINE_CONCURRENCY, async (skill) => {
         const dirName = dirNameOf(skill)
-        if (!wanted.has(dirName)) continue
         const meta = ledger[dirName]
-        const target: SyndicationTarget = { machine: name, scope: 'global' }
         try {
           if (meta?.repo && meta.ref) {
             // Repo-backed: the machine pulls the pinned version from origin.
-            snapshot = await machines().install(machine, {
+            await machines().install(machine, {
               repo: meta.repo,
               skillId: `${meta.repo}:${meta.path}`,
               scope: 'global',
               ref: meta.ref,
             })
           } else {
-            // Hand-authored or adopted-without-origin: push the library's
-            // own files to the machine.
-            const files = (await listSkillFiles(skill.realPath).catch(() => [])).map((file) => file.relativePath)
-            const payload: Array<{ path: string; base64: string }> = []
-            for (const relativePath of files) {
-              const buffer = await fs.readFile(path.join(skill.realPath, ...relativePath.split('/')))
-              payload.push({ path: relativePath, base64: buffer.toString('base64') })
-            }
-            snapshot = await machines().writeSkill(machine, { dirName, files: payload })
+            // Hand-authored or adopted-without-origin: push the library's own files.
+            await machines().writeSkill(machine, { dirName, files: await packSkillFiles(skill.realPath) })
           }
-          await libraryStore.set(dirName, {
-            ...EMPTY_META,
-            ...meta,
-            targets: withTarget(meta?.targets ?? [], target),
-          })
           logger.info('sync.converge.installed', { machine: name, skill: dirName, via: meta?.repo && meta.ref ? 'repo' : 'files' })
-          installed.push(dirName)
+          return { dirName, error: null }
         } catch (cause) {
           const message = cause instanceof Error ? cause.message : String(cause)
-          failed[dirName] = message
           logger.warn('sync.converge.failed', { machine: name, skill: dirName, error: message })
+          return { dirName, error: message }
         }
+      })
+
+      const installed = outcomes.filter((outcome) => outcome.error === null).map((outcome) => outcome.dirName)
+      const failed = Object.fromEntries(
+        outcomes.filter((outcome) => outcome.error !== null).map((outcome) => [outcome.dirName, outcome.error as string]),
+      )
+      if (installed.length > 0) {
+        await libraryStore.update((skills) => {
+          for (const dirName of installed) {
+            skills[dirName] = { ...EMPTY_META, ...skills[dirName], targets: withTarget(skills[dirName]?.targets ?? [], target) }
+          }
+        })
       }
       logger.info('sync.converge.done', { machine: name, installed: installed.length, failed: Object.keys(failed).length })
 
-      const machineState: MachineSnapshot = snapshot
-        ? { machine, snapshot }
-        : await machines().snapshot(machine)
+      const machineState = await machines().snapshot(machine)
       return { workspace: await buildSnapshot(config), machine: machineState, installed, failed }
     },
 
@@ -1221,23 +1217,22 @@ export function createSkillWorkspace({
       )
 
       let categorized = 0
-      for (const skill of candidates) {
-        const name = dirNameOf(skill)
-        const assignment = assignments.get(name)
-        if (!assignment) continue
-        const existing = ledger[name]
-        await libraryStore.set(name, {
-          repo: existing?.repo ?? '',
-          path: existing?.path ?? '',
-          ref: existing?.ref ?? '',
-          targets: existing?.targets ?? [],
-          ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
-          category: assignment.category,
-          categorySource: assignment.source,
-          categoryConfidence: assignment.confidence,
-        })
-        categorized++
-      }
+      // One ledger write for the whole run, not one per skill.
+      await libraryStore.update((skills) => {
+        for (const skill of candidates) {
+          const name = dirNameOf(skill)
+          const assignment = assignments.get(name)
+          if (!assignment) continue
+          skills[name] = {
+            ...EMPTY_META,
+            ...skills[name],
+            category: assignment.category,
+            categorySource: assignment.source,
+            categoryConfidence: assignment.confidence,
+          }
+          categorized++
+        }
+      })
 
       return {
         workspace: await buildSnapshot(config),
@@ -1252,18 +1247,12 @@ export function createSkillWorkspace({
       if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
       const name = dirNameOf(skill)
       const existing = (await libraryStore.load())[name]
-      const base = {
-        repo: existing?.repo ?? '',
-        path: existing?.path ?? '',
-        ref: existing?.ref ?? '',
-        targets: existing?.targets ?? [],
-        ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
-      }
+      // Clearing removes the category fields entirely (spread of `rest`).
+      const { category: _category, categorySource: _source, categoryConfidence: _confidence, ...rest } = existing ?? {}
+      const base: LibrarySkillMeta = { ...EMPTY_META, ...rest }
       await libraryStore.set(
         name,
-        category
-          ? { ...base, category, categorySource: 'manual', categoryConfidence: 1 }
-          : base,
+        category ? { ...base, category, categorySource: 'manual', categoryConfidence: 1 } : base,
       )
       return buildSnapshot(await configStore.load())
     },
@@ -1275,12 +1264,22 @@ function dirNameOf(skill: SkillRecord): string {
   return path.basename(skill.realPath)
 }
 
+/** How agent-facing calls resolve a skill: exact id, or case-insensitive name / folder name. */
+function matchesSkillName(needle: string): (skill: SkillRecord) => boolean {
+  const lower = needle.toLowerCase()
+  return (skill) =>
+    skill.id === needle || skill.name.toLowerCase() === lower || dirNameOf(skill).toLowerCase() === lower
+}
+
 /**
  * Baseline for a ledger entry. Writers spread `{ ...EMPTY_META, ...existing, …changes }`
  * so optional fields (category, adoptedFrom) survive — `libraryStore.set` replaces
  * the entry, it does not merge.
  */
 const EMPTY_META: LibrarySkillMeta = { repo: '', path: '', ref: '', targets: [] }
+
+/** Concurrent agent sessions per machine during bulk sync. */
+const MACHINE_CONCURRENCY = 4
 
 function targetKey(target: SyndicationTarget): string {
   return `${target.machine}\u0000${target.scope}\u0000${target.projectName ?? ''}`

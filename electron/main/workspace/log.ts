@@ -55,16 +55,3 @@ export const logger = {
   warn: (event: string, fields?: LogFields) => log('warn', event, fields),
   error: (event: string, fields?: LogFields) => log('error', event, fields),
 }
-
-/** Time an async operation, logging start/end with duration and outcome. */
-export async function timed<T>(event: string, fields: LogFields, run: () => Promise<T>): Promise<T> {
-  const started = Date.now()
-  try {
-    const result = await run()
-    logger.debug(`${event}.ok`, { ...fields, ms: Date.now() - started })
-    return result
-  } catch (cause) {
-    logger.warn(`${event}.fail`, { ...fields, ms: Date.now() - started, error: cause instanceof Error ? cause.message : String(cause) })
-    throw cause
-  }
-}

@@ -353,7 +353,7 @@ describe('machine diff, adopt, converge', () => {
     expect(result.installed).toEqual(['lib-only'])
     const write = calls.find((call) => call.command === 'write-skill')
     expect(write?.input).toMatchObject({ dirName: 'lib-only' })
-    expect((write?.input as { files: unknown[] }).files.length).toBeGreaterThan(0)
+    expect((write!.input as { files: unknown[] }).files.length).toBeGreaterThan(0)
   })
 })
 
@@ -546,7 +546,7 @@ describe('agent-facing API: import files, lookup, distribute', () => {
     expect(first.results).toEqual({ tower: { status: 'installed' } })
     const push = calls.find((call) => call.command === 'write-skill')
     expect(push?.input).toMatchObject({ dirName: 'hello-world' })
-    expect((push?.input as { files: Array<{ path: string }> }).files.map((file) => file.path).sort()).toEqual(['SKILL.md', 'scripts/hi.sh'])
+    expect((push!.input as { files: Array<{ path: string }> }).files.map((file) => file.path).sort()).toEqual(['SKILL.md', 'scripts/hi.sh'])
     // The ledger now knows tower has it.
     const snapshot = await ws.getSnapshot()
     expect(snapshot.skills.find((skill) => skill.name === 'hello-world')?.library?.targets).toEqual([{ machine: 'tower', scope: 'global' }])

@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import { logger } from './log'
-import type { MachineRecord, MachineSnapshot, WorkspaceSnapshot } from './types'
+import type { MachineRecord, MachineSnapshot, WorkspaceSnapshot, SkillRecord } from './types'
 
 export type ExecResult = { stdout: string; stderr: string; code: number }
 
@@ -68,7 +68,7 @@ export type MachineSetEnabledInput = MachineUninstallInput & { enabled: boolean 
 
 /** A skill's files as shipped back by the agent's read-skill command. */
 export type MachineSkillFiles = {
-  skill: import('./types').SkillRecord
+  skill: SkillRecord
   files: Array<{ path: string; base64: string }>
 }
 
@@ -136,7 +136,12 @@ export function createMachineManager({
     const started = Date.now()
     const local = isSelf(machine)
     // Summarize the command for logs without dumping agent payloads/stdin.
-    const summary = remoteCommand.replace(/\s+/g, ' ').slice(0, 120)
+    const base = {
+      machine: machine.name,
+      target: `${machine.user}@${machine.host}`,
+      transport: local ? 'local' : 'ssh',
+      command: remoteCommand.replace(/\s+/g, ' ').slice(0, 120),
+    }
     let result: ExecResult
     try {
       // Managing the host we run on: same commands, local bash, no SSH.
@@ -144,15 +149,11 @@ export function createMachineManager({
         ? await execImpl('bash', ['-c', remoteCommand], opts)
         : await execImpl('ssh', sshArgs(machine, remoteCommand), opts)
     } catch (cause) {
-      logger.error('machine.exec.error', {
-        machine: machine.name, target: `${machine.user}@${machine.host}`, transport: local ? 'local' : 'ssh',
-        command: summary, ms: Date.now() - started, error: cause instanceof Error ? cause.message : String(cause),
-      })
+      logger.error('machine.exec.error', { ...base, ms: Date.now() - started, error: cause })
       throw cause
     }
     const fields = {
-      machine: machine.name, target: `${machine.user}@${machine.host}`, transport: local ? 'local' : 'ssh',
-      command: summary, code: result.code, ms: Date.now() - started,
+      ...base, code: result.code, ms: Date.now() - started,
       stdoutBytes: result.stdout.length, inputBytes: opts.input?.length ?? 0,
     }
     if (result.code === 0) logger.debug('machine.exec', fields)

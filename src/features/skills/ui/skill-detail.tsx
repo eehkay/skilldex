@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Server } from 'lucide-react'
-import { CATEGORY_LABELS, CATEGORY_ORDER, scopePillClass, shortRef, type MachineSnapshot, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillCategory, type SkillFile } from '../model/skills'
+import { CATEGORY_LABELS, CATEGORY_ORDER, scopePillClass, shortRef, type MachineSnapshot, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillCategory, type SkillFile, formatSize, dirNameOf } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
 
@@ -21,12 +21,6 @@ type SkillDetailProps = {
 }
 
 type Tab = 'instructions' | 'files' | 'activity'
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onSetCategory, onBack }: SkillDetailProps) {
   const [tab, setTab] = useState<Tab>('instructions')
@@ -339,7 +333,7 @@ function SyndicationPanel({
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const targets = skill.library?.targets ?? []
-  const dirName = skill.realPath.split('/').filter(Boolean).pop() ?? ''
+  const dirName = dirNameOf(skill.realPath)
 
   const run = async (machineName: string, op: () => Promise<void>) => {
     setPending(machineName)
@@ -366,7 +360,7 @@ function SyndicationPanel({
           const remoteCopy = entry.snapshot?.skills.find(
             (remote) =>
               remote.sourceKind === 'Personal' &&
-              (remote.realPath.split('/').filter(Boolean).pop() ?? '') === dirName,
+              dirNameOf(remote.realPath) === dirName,
           )
           const busy = pending !== null
           return (

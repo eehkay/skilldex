@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowDownToLine, ArrowUpFromLine, Check, Eraser, Loader2, RefreshCw } from 'lucide-react'
-import type { MachineDiff, SkillRecord } from '@/features/skills/model/skills'
+import { dirNameOf as dirNameOfPath, type MachineDiff, type SkillRecord } from '@/features/skills/model/skills'
 
 type MachineSyncPanelProps = {
   machineName: string
@@ -328,6 +328,4 @@ function DiffSection({
   )
 }
 
-function dirNameOf(skill: SkillRecord): string {
-  return skill.realPath.split('/').filter(Boolean).pop() ?? skill.name
-}
+const dirNameOf = (skill: { realPath: string; name: string }) => dirNameOfPath(skill.realPath) || skill.name

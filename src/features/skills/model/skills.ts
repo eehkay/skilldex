@@ -281,6 +281,18 @@ export function iconColorsFor(id: string): { bg: string; fg: string } {
   return { bg: ICON_BG[index], fg: ACCENT_PALETTE[index] }
 }
 
+/** Human-readable byte count: `812 B`, `3.4 KB`, `1.2 MB`. */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** Last path segment — the skill's folder name, which keys the library ledger and machine sync. */
+export function dirNameOf(skillPath: string): string {
+  return skillPath.split('/').filter(Boolean).pop() ?? ''
+}
+
 /** Short display form of a pinned ref: 7 chars for a sha, as-is otherwise. */
 export function shortRef(ref: string | undefined): string | undefined {
   if (!ref) return undefined

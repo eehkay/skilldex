@@ -82,6 +82,20 @@ export async function listSkillFiles(skillDir: string): Promise<SkillFile[]> {
   return files.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
 }
 
+/** A skill's files as they travel between hub and agent (base64 so binaries survive JSON). */
+export type PackedSkillFile = { path: string; base64: string }
+
+/** Read every file under a skill folder into the wire shape used by read-skill / write-skill. */
+export async function packSkillFiles(skillDir: string): Promise<PackedSkillFile[]> {
+  const files = await listSkillFiles(skillDir)
+  const packed: PackedSkillFile[] = []
+  for (const file of files) {
+    const buffer = await fs.readFile(path.join(skillDir, ...file.relativePath.split('/')))
+    packed.push({ path: file.relativePath, base64: buffer.toString('base64') })
+  }
+  return packed
+}
+
 /** List immediate child directories of `dir` that contain a `SKILL.md`. */
 async function listSkillDirs(dir: string): Promise<string[]> {
   const entries = await fs.readdir(dir, { withFileTypes: true })
@@ -247,9 +261,15 @@ export async function scanPluginSkills(homeDir: string): Promise<ScanResult> {
  */
 async function loadEnabledPlugins(homeDir: string): Promise<Set<string>> {
   const flags = new Map<string, boolean>()
-  for (const file of ['settings.json', 'settings.local.json']) {
+  // Managed (org-wide) settings first so user settings override them.
+  const files = [
+    ...MANAGED_SETTINGS_PATHS,
+    path.join(homeDir, '.claude', 'settings.json'),
+    path.join(homeDir, '.claude', 'settings.local.json'),
+  ]
+  for (const file of files) {
     try {
-      const data = JSON.parse(await fs.readFile(path.join(homeDir, '.claude', file), 'utf8')) as {
+      const data = JSON.parse(await fs.readFile(file, 'utf8')) as {
         enabledPlugins?: Record<string, unknown>
       }
       for (const [key, value] of Object.entries(data.enabledPlugins ?? {})) {
@@ -271,6 +291,14 @@ async function loadEnabledPlugins(homeDir: string): Promise<Set<string>> {
   }
   return new Set([...flags.entries()].filter(([, on]) => on).map(([key]) => key))
 }
+
+/** Where Claude Code reads enterprise-managed settings from, per platform. */
+const MANAGED_SETTINGS_PATHS =
+  process.platform === 'darwin'
+    ? ['/Library/Application Support/ClaudeCode/managed-settings.json']
+    : process.platform === 'win32'
+      ? ['C:\\ProgramData\\ClaudeCode\\managed-settings.json']
+      : ['/etc/claude-code/managed-settings.json']
 
 /** Manifest plugin names whose in-repo source folder is `dir` (e.g. `./plugins/<dir>`). */
 function manifestNamesForDir(sources: Map<string, PluginSource>, dir: string): string[] {
