@@ -204,6 +204,67 @@ export type MachineSnapshot = {
   error?: string
 }
 
+/**
+ * Claude Code plugins, as reported by `claude plugin … --json` on a machine.
+ * Plugins are managed by Claude Code itself (marketplace install/update); the
+ * hub only inventories them and drives the CLI, it never copies their files.
+ */
+export type InstalledPlugin = {
+  /** `name@marketplace` — the CLI's identity for install/enable/disable. */
+  id: string
+  name: string
+  marketplace: string
+  version: string
+  scope: string
+  enabled: boolean
+  installPath?: string
+  installedAt?: string
+  lastUpdated?: string
+  /** MCP servers the plugin contributes (names only — config may hold secrets). */
+  mcpServers?: string[]
+}
+
+export type PluginMarketplace = {
+  name: string
+  /** 'github' | 'directory' | 'url' … as the CLI reports it. */
+  source: string
+  /** owner/repo for github sources; path for local; url otherwise. */
+  location: string
+}
+
+/** A plugin offered by one of a machine's marketplaces (`--available`). */
+export type AvailablePlugin = {
+  id: string
+  name: string
+  marketplace: string
+  description: string
+  version?: string
+  installCount?: number
+}
+
+/** One machine's plugin inventory. `claude` missing → available:false with error. */
+export type MachinePlugins = {
+  machine: MachineRecord
+  available: boolean
+  plugins: InstalledPlugin[]
+  marketplaces: PluginMarketplace[]
+  error?: string
+}
+
+export type PluginOp = 'install' | 'uninstall' | 'enable' | 'disable'
+export type PluginOpInput = {
+  op: PluginOp
+  /** Plugin id (`name@marketplace`) or bare name for enable/disable/uninstall. */
+  plugin: string
+  /**
+   * For install: the marketplace source to add first if the machine doesn't
+   * have it (github `owner/repo`, URL, or path) — copied from the machine the
+   * plugin was seen on, so "install here too" is one click.
+   */
+  marketplaceSource?: string
+  marketplaceName?: string
+}
+
 export type CreateSkillInput = {
   name: string
   description: string

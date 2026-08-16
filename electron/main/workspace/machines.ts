@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import { logger } from './log'
-import type { MachineRecord, MachineSnapshot, WorkspaceSnapshot, SkillRecord } from './types'
+import type { AvailablePlugin, MachinePlugins, MachineRecord, MachineSnapshot, PluginOpInput, WorkspaceSnapshot, SkillRecord } from './types'
 
 export type ExecResult = { stdout: string; stderr: string; code: number }
 
@@ -94,6 +94,12 @@ export type MachineManager = {
     input: { dirName: string; files: Array<{ path: string; base64: string }> },
   ): Promise<WorkspaceSnapshot>
   skillOp(machine: MachineRecord, op: 'enable' | 'disable' | 'remove', id: string): Promise<WorkspaceSnapshot>
+  /** Claude Code plugin inventory (never throws — unreachable → error field). */
+  plugins(machine: MachineRecord): Promise<MachinePlugins>
+  /** Plugins the machine's marketplaces offer. */
+  availablePlugins(machine: MachineRecord): Promise<AvailablePlugin[]>
+  /** Install/uninstall/enable/disable a plugin via the machine's `claude` CLI. */
+  pluginOp(machine: MachineRecord, input: PluginOpInput): Promise<MachinePlugins>
   /** Does this record point at the host we're running on, as our user (local bash, no SSH)? */
   isSelf(machine: MachineRecord): boolean
 }
@@ -269,6 +275,28 @@ export function createMachineManager({
 
     skillOp(machine, op, id) {
       return agentCall<WorkspaceSnapshot>(machine, op, { input: { id }, timeoutMs: SNAPSHOT_TIMEOUT })
+    },
+
+    async plugins(machine) {
+      try {
+        const result = await agentCall<Omit<MachinePlugins, 'machine'>>(machine, 'plugins', { timeoutMs: SNAPSHOT_TIMEOUT })
+        logger.info('machine.plugins', { machine: machine.name, available: result.available, plugins: result.plugins.length, marketplaces: result.marketplaces.length })
+        return { machine, ...result }
+      } catch (cause) {
+        const error = cause instanceof Error ? cause.message : String(cause)
+        logger.warn('machine.plugins.failed', { machine: machine.name, error })
+        return { machine, available: false, plugins: [], marketplaces: [], error }
+      }
+    },
+
+    availablePlugins(machine) {
+      return agentCall<AvailablePlugin[]>(machine, 'plugins-available', { timeoutMs: INSTALL_TIMEOUT })
+    },
+
+    async pluginOp(machine, input) {
+      logger.info('machine.plugin.op', { machine: machine.name, op: input.op, plugin: input.plugin })
+      const result = await agentCall<Omit<MachinePlugins, 'machine'>>(machine, 'plugin-op', { input, timeoutMs: INSTALL_TIMEOUT })
+      return { machine, ...result }
     },
   }
 }

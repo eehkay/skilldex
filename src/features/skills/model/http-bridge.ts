@@ -26,8 +26,11 @@ import type {
   ImportSkillArchiveInput,
   InstallRepoSkillInput,
   LogEntry,
+  AvailablePlugin,
   MachineDiff,
+  MachinePlugins,
   MachineRecord,
+  PluginOpInput,
   MachineSnapshot,
   RepoCatalog,
   SetSkillEnabledInput,
@@ -120,6 +123,11 @@ export function createHttpBridge(): WorkspaceBridge {
       call<CategorizeResult>('POST', 'categorize-library', { force: options?.force ?? false }),
     setSkillCategory: (id: string, category: SkillCategory | null) =>
       call<WorkspaceSnapshot>('POST', 'set-skill-category', { id, category }),
+    listMachinePlugins: () => call<MachinePlugins[]>('GET', 'plugins'),
+    machinePlugins: (name: string) => call<MachinePlugins>('GET', `machine-plugins?name=${encodeURIComponent(name)}`),
+    availablePlugins: (name: string) => call<AvailablePlugin[]>('GET', `available-plugins?name=${encodeURIComponent(name)}`),
+    machinePluginOp: (name: string, input: PluginOpInput) =>
+      call<MachinePlugins>('POST', 'machine-plugin-op', { name, ...input }),
     setSkillTags: (id: string, tags: string[]) => call<WorkspaceSnapshot>('POST', 'set-skill-tags', { id, tags }),
     tagSkills: (skillIds: string[], change: TagChange) =>
       call<TagSkillsResult>('POST', 'tag-skills', { skillIds, add: change.add ?? [], remove: change.remove ?? [] }),

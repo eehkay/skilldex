@@ -60,6 +60,37 @@ export type LibrarySkillMeta = {
   tags?: string[]
 }
 
+export type InstalledPlugin = {
+  id: string
+  name: string
+  marketplace: string
+  version: string
+  scope: string
+  enabled: boolean
+  installPath?: string
+  installedAt?: string
+  lastUpdated?: string
+  mcpServers?: string[]
+}
+export type PluginMarketplace = { name: string; source: string; location: string }
+export type AvailablePlugin = {
+  id: string
+  name: string
+  marketplace: string
+  description: string
+  version?: string
+  installCount?: number
+}
+export type MachinePlugins = {
+  machine: MachineRecord
+  available: boolean
+  plugins: InstalledPlugin[]
+  marketplaces: PluginMarketplace[]
+  error?: string
+}
+export type PluginOp = 'install' | 'uninstall' | 'enable' | 'disable'
+export type PluginOpInput = { op: PluginOp; plugin: string; marketplaceSource?: string; marketplaceName?: string }
+
 export type TagChange = { add?: string[]; remove?: string[] }
 export type TagSkillsResult = { workspace: WorkspaceSnapshot; tagged: number; skipped: string[] }
 

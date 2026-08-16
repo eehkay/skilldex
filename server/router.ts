@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { logger, recentLogs } from '../electron/main/workspace/log'
 import { CATEGORY_IDS } from '../electron/main/workspace/categorizer'
 import type { SkillWorkspace } from '../electron/main/workspace/skill-workspace'
-import type { SkillCategory, WorkspaceConfig } from '../electron/main/workspace/types'
+import type { PluginOpInput, SkillCategory, WorkspaceConfig } from '../electron/main/workspace/types'
 
 type Handler = (query: URLSearchParams, body: Record<string, unknown>) => Promise<unknown>
 
@@ -98,6 +98,26 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     ['POST /api/machine-install', async (_q, body) => {
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
       return workspace.installOnMachine(body.name, inputOf(body))
+    }],
+    ['GET /api/plugins', async () => workspace.listMachinePlugins()],
+    ['GET /api/machine-plugins', async (q) => {
+      const name = q.get('name')
+      if (!name) throw new Error('Missing machine name.')
+      return workspace.machinePlugins(name)
+    }],
+    ['GET /api/available-plugins', async (q) => {
+      const name = q.get('name')
+      if (!name) throw new Error('Missing machine name.')
+      return workspace.availablePlugins(name)
+    }],
+    ['POST /api/machine-plugin-op', async (_q, body) => {
+      if (typeof body.name !== 'string' || typeof body.op !== 'string' || typeof body.plugin !== 'string') throw new Error('Missing name, op or plugin.')
+      return workspace.machinePluginOp(body.name, {
+        op: body.op as PluginOpInput['op'],
+        plugin: body.plugin,
+        ...(typeof body.marketplaceSource === 'string' ? { marketplaceSource: body.marketplaceSource } : {}),
+        ...(typeof body.marketplaceName === 'string' ? { marketplaceName: body.marketplaceName } : {}),
+      })
     }],
     ['POST /api/set-syndication', async (_q, body) => workspace.setSyndication(inputOf(body))],
     ['POST /api/set-skill-enabled', async (_q, body) => workspace.setSkillEnabled(inputOf(body))],

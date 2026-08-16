@@ -109,6 +109,10 @@ export function Dashboard() {
     setSkillCategory,
     setSkillTags,
     tagSkills,
+    listMachinePlugins,
+    machinePlugins,
+    availablePlugins,
+    machinePluginOp,
     getLogs,
   } = useWorkspace()
   const [filter, setFilter] = useState<FilterKey>('all')
@@ -416,6 +420,10 @@ export function Dashboard() {
             onAdopt={(ids) => adoptFromMachine(activeMachineEntry.machine.name, ids)}
             onConverge={(names) => convergeMachine(activeMachineEntry.machine.name, names)}
             onClear={() => clearMachine(activeMachineEntry.machine.name)}
+            loadPlugins={machinePlugins}
+            loadFleetPlugins={listMachinePlugins}
+            loadAvailablePlugins={availablePlugins}
+            onPluginOp={machinePluginOp}
           />
         ) : activeCatalog ? (
           <RepoBrowser

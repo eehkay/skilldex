@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Server } from 'lucide-react'
 import { CATEGORY_LABELS, CATEGORY_ORDER, scopePillClass, shortRef, type MachineSnapshot, type OriginCandidate, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillCategory, type SkillFile, formatSize, dirNameOf } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
@@ -31,6 +31,17 @@ type Tab = 'instructions' | 'files' | 'activity'
 
 export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onSetCategory, allTags, onSetTags, findOrigin, onLinkOrigin, onBack }: SkillDetailProps) {
   const [tab, setTab] = useState<Tab>('instructions')
+  // Machines where a plugin ships a skill with this name alongside the
+  // library copy — a duplicate Claude will load twice.
+  const pluginTwins = useMemo(
+    () =>
+      skill.scope === 'global'
+        ? machines
+            .filter((entry) => entry.snapshot?.skills.some((s) => s.sourceKind === 'Plugin' && s.name === skill.name))
+            .map((entry) => entry.machine.name)
+        : [],
+    [machines, skill.name, skill.scope],
+  )
   const [readme, setReadme] = useState<string | null>(null)
   const [files, setFiles] = useState<SkillFile[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -203,6 +214,11 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
           )}
         </div>
 
+        {pluginTwins.length > 0 && (
+          <div className="mb-4 rounded-[11px] border border-[#3f2f14] bg-[#171207] px-3.5 py-2.5 text-[12px] leading-relaxed text-[#d4c9a8]">
+            <span className="font-semibold text-[#fbbf24]">Also provided by a Claude plugin</span> on {pluginTwins.join(', ')} — Claude loads both there. Open that machine's Plugins tab to drop the library copy.
+          </div>
+        )}
         <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#52525b]">Details</div>
         {meta.map((row) => (
           <div key={row.label} className="flex items-center justify-between gap-3 border-b border-[#17171a] py-2.5">

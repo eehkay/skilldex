@@ -13,8 +13,11 @@ import type {
   ImportSkillArchiveInput,
   InstallRepoSkillInput,
   LogEntry,
+  AvailablePlugin,
   MachineDiff,
+  MachinePlugins,
   MachineRecord,
+  PluginOpInput,
   MachineSnapshot,
   RepoCatalog,
   SetSkillEnabledInput,
@@ -72,6 +75,10 @@ declare global {
         linkOrigins(): Promise<LinkOriginsResult>
         categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
         setSkillCategory(id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
+        listMachinePlugins(): Promise<MachinePlugins[]>
+        machinePlugins(name: string): Promise<MachinePlugins>
+        availablePlugins(name: string): Promise<AvailablePlugin[]>
+        machinePluginOp(name: string, input: PluginOpInput): Promise<MachinePlugins>
         setSkillTags(id: string, tags: string[]): Promise<WorkspaceSnapshot>
         tagSkills(skillIds: string[], change: TagChange): Promise<TagSkillsResult>
       }

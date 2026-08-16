@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, FileText, Pencil, RefreshCw, Trash2 } from 'lucide-react'
-import { iconColorsFor, monoFor, scopePillClass, toSkill, type MachineDiff, type MachineSnapshot, type Skill } from '@/features/skills/model/skills'
+import { iconColorsFor, monoFor, scopePillClass, toSkill, type AvailablePlugin, type MachineDiff, type MachinePlugins, type MachineSnapshot, type PluginOpInput, type Skill } from '@/features/skills/model/skills'
 import { SkillToggle } from '@/features/skills/ui/skill-toggle'
+import { MachinePluginsPanel } from './machine-plugins-panel'
 import { MachineSyncPanel } from './machine-sync-panel'
 
 type MachineFilter = 'sync' | 'all' | 'global' | 'plugin' | 'project' | 'disabled'
@@ -26,6 +27,10 @@ type MachineViewProps = {
   onAdopt: (skillIds: string[]) => Promise<{ adopted: string[]; failed: Record<string, string> } | null>
   onConverge: (dirNames: string[]) => Promise<{ installed: string[]; failed: Record<string, string> } | null>
   onClear: () => Promise<{ removed: string[]; failed: Record<string, string>; kept: string[] } | null>
+  loadPlugins: (name: string) => Promise<MachinePlugins | null>
+  loadFleetPlugins: () => Promise<MachinePlugins[]>
+  loadAvailablePlugins: (name: string) => Promise<AvailablePlugin[]>
+  onPluginOp: (name: string, input: PluginOpInput) => Promise<MachinePlugins | null>
 }
 
 /**
@@ -33,7 +38,7 @@ type MachineViewProps = {
  * enable/disable/remove. Read/detail affordances stay local-only for now —
  * this pane is about what's installed where.
  */
-export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillOp, loadDiff, onAdopt, onConverge, onClear }: MachineViewProps) {
+export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillOp, loadDiff, onAdopt, onConverge, onClear, loadPlugins, loadFleetPlugins, loadAvailablePlugins, onPluginOp }: MachineViewProps) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<MachineFilter>('sync')
   const skills = useMemo(
@@ -128,7 +133,7 @@ export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillO
                     active ? 'border-[#f97316] font-semibold text-[#fafafa]' : 'border-transparent font-medium text-[#71717a]'
                   }`}
                 >
-                  {item.label}{item.key !== 'sync' && <> <span className="font-mono text-[11px] opacity-60">{counts[item.key]}</span></>}
+                  {item.label}{item.key !== 'sync' && item.key !== 'plugin' && <> <span className="font-mono text-[11px] opacity-60">{counts[item.key]}</span></>}
                 </button>
               )
             })}
@@ -160,6 +165,16 @@ export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillO
             onAdopt={onAdopt}
             onConverge={onConverge}
             onClear={onClear}
+          />
+        ) : filter === 'plugin' ? (
+          <MachinePluginsPanel
+            machineName={entry.machine.name}
+            skills={skills}
+            loadPlugins={loadPlugins}
+            loadFleet={loadFleetPlugins}
+            loadAvailable={loadAvailablePlugins}
+            onOp={onPluginOp}
+            onRemoveSkill={(id) => onSkillOp('remove', id)}
           />
         ) : visible.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#27272a] px-6 py-14 text-center text-[13px] text-[#71717a]">

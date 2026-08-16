@@ -69,7 +69,10 @@ import type {
   LibrarySkillMeta,
   MachineRecord,
   MachineDiff,
+  MachinePlugins,
   MachineSnapshot,
+  AvailablePlugin,
+  PluginOpInput,
   RepoCatalog,
   SkillCategory,
   SkillFile,
@@ -211,6 +214,13 @@ export type SkillWorkspace = {
   installOnMachine(name: string, input: InstallRepoSkillInput): Promise<MachineSnapshot>
   /** Enable/disable/remove a skill on a machine. Returns its fresh snapshot. */
   machineSkillOp(name: string, op: 'enable' | 'disable' | 'remove', id: string): Promise<MachineSnapshot>
+  /** Claude Code plugin inventory for every machine (parallel; per-machine errors, never throws). */
+  listMachinePlugins(): Promise<MachinePlugins[]>
+  machinePlugins(name: string): Promise<MachinePlugins>
+  /** What a machine's marketplaces offer (large; fetched on demand). */
+  availablePlugins(name: string): Promise<AvailablePlugin[]>
+  /** Install/uninstall/enable/disable a plugin on one machine through its `claude` CLI. */
+  machinePluginOp(name: string, input: PluginOpInput): Promise<MachinePlugins>
   /** Syndicate a library skill to a machine (or uninstall it from one). */
   setSyndication(input: SetSyndicationInput): Promise<SyndicationResult>
   /** Enable/disable with granular reach: locally, on one machine, or everywhere. */
@@ -924,6 +934,27 @@ export function createSkillWorkspace({
       const machine = await findMachine(name)
       const snapshot = await machines().skillOp(machine, op, id)
       return { machine, snapshot }
+    },
+
+    async listMachinePlugins() {
+      const config = await configStore.load()
+      const manager = machines()
+      return Promise.all(config.machines.map((machine) => manager.plugins(machine)))
+    },
+
+    async machinePlugins(name) {
+      return machines().plugins(await findMachine(name))
+    },
+
+    async availablePlugins(name) {
+      return machines().availablePlugins(await findMachine(name))
+    },
+
+    async machinePluginOp(name, input) {
+      const ops = ['install', 'uninstall', 'enable', 'disable'] as const
+      if (!ops.includes(input.op)) throw new Error(`Unknown plugin op "${String(input.op)}".`)
+      if (!input.plugin?.trim() || /\s/.test(input.plugin)) throw new Error('Invalid plugin id.')
+      return machines().pluginOp(await findMachine(name), input)
     },
 
     async setSyndication(input) {

@@ -26,8 +26,12 @@ afterEach(async () => {
  * A fake remote machine: tracks the pushed agent content and answers hash
  * probes and agent commands the way the real ssh round-trip would.
  */
-function fakeMachine(options: { reachable?: boolean; snapshot?: unknown } = {}) {
-  const state = { agent: null as string | null, pushes: 0, commands: [] as string[] }
+function fakeMachine(options: { reachable?: boolean; snapshot?: unknown; pluginsBroken?: boolean } = {}) {
+  const state = {
+    agent: null as string | null, pushes: 0, commands: [] as string[],
+    plugins: [] as Array<{ id: string; name: string; marketplace: string; version: string; scope: string; enabled: boolean }>,
+    pluginOps: [] as string[],
+  }
   const exec: ExecLike = async (_cmd, args, { input }) => {
     const remote = args[args.length - 1]
     state.commands.push(remote)
@@ -46,6 +50,19 @@ function fakeMachine(options: { reachable?: boolean; snapshot?: unknown } = {}) 
     }
     if (remote.includes('agent.js ping')) return ok(JSON.stringify({ ok: true, node: 'v22.0.0' }))
     if (remote.includes('agent.js snapshot')) return ok(JSON.stringify(options.snapshot ?? { skills: [] }))
+    if (remote.includes('agent.js plugins-available')) return ok(JSON.stringify([{ id: 'x@m', name: 'x', marketplace: 'm', description: 'X' }]))
+    if (remote.includes('agent.js plugins')) {
+      if (options.pluginsBroken) return { stdout: JSON.stringify({ error: 'claude plugin list failed: boom' }), stderr: '', code: 1 }
+      return ok(JSON.stringify({ available: true, plugins: state.plugins, marketplaces: [{ name: 'm', source: 'github', location: 'o/r' }] }))
+    }
+    if (remote.includes('agent.js plugin-op')) {
+      const parsed = JSON.parse(input ?? '{}') as { op: string; plugin: string }
+      state.pluginOps.push(`${parsed.op}:${parsed.plugin}`)
+      if (parsed.op === 'install') state.plugins.push({ id: parsed.plugin, name: parsed.plugin.split('@')[0], marketplace: 'm', version: '1', scope: 'user', enabled: true })
+      if (parsed.op === 'uninstall') state.plugins = state.plugins.filter((p) => p.id !== parsed.plugin)
+      if (parsed.op === 'enable' || parsed.op === 'disable') for (const p of state.plugins) if (p.id === parsed.plugin) p.enabled = parsed.op === 'enable'
+      return ok(JSON.stringify({ available: true, plugins: state.plugins, marketplaces: [] }))
+    }
     if (remote.includes('agent.js install')) {
       const parsed = JSON.parse(input ?? '{}')
       if (parsed.skillId === 'boom') return { stdout: JSON.stringify({ error: 'download failed' }), stderr: '', code: 1 }
@@ -150,5 +167,33 @@ describe('machine manager', () => {
     for (const command of remote.state.commands) {
       expect(command.startsWith("bash -c '")).toBe(true)
     }
+  })
+})
+
+describe('machine manager: plugins', () => {
+  it('reads the inventory, runs ops through the agent, and reflects the result', async () => {
+    const machine = fakeMachine()
+    const manager = createMachineManager({ agentPath, execImpl: machine.exec })
+    expect(await manager.plugins(MACHINE)).toMatchObject({ machine: MACHINE, available: true, plugins: [], marketplaces: [{ name: 'm' }] })
+
+    let result = await manager.pluginOp(MACHINE, { op: 'install', plugin: 'fd@m' })
+    expect(result.plugins).toEqual([expect.objectContaining({ id: 'fd@m', enabled: true })])
+    result = await manager.pluginOp(MACHINE, { op: 'disable', plugin: 'fd@m' })
+    expect(result.plugins[0].enabled).toBe(false)
+    result = await manager.pluginOp(MACHINE, { op: 'uninstall', plugin: 'fd@m' })
+    expect(result.plugins).toEqual([])
+    expect(machine.state.pluginOps).toEqual(['install:fd@m', 'disable:fd@m', 'uninstall:fd@m'])
+    expect(await manager.availablePlugins(MACHINE)).toEqual([expect.objectContaining({ id: 'x@m' })])
+  })
+
+  it('never throws from plugins(): agent failure and unreachable host become error fields', async () => {
+    const broken = fakeMachine({ pluginsBroken: true })
+    const r1 = await createMachineManager({ agentPath, execImpl: broken.exec }).plugins(MACHINE)
+    expect(r1.available).toBe(false)
+    expect(r1.error).toContain('boom')
+    const down = fakeMachine({ reachable: false })
+    const r2 = await createMachineManager({ agentPath, execImpl: down.exec }).plugins(MACHINE)
+    expect(r2.available).toBe(false)
+    expect(r2.error).toBeTruthy()
   })
 })

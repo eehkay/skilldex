@@ -11,6 +11,7 @@ import type {
   ImportSkillArchiveInput,
   InstallRepoSkillInput,
   MachineRecord,
+  PluginOpInput,
   SkillCategory,
   WorkspaceConfig,
 } from './workspace/types'
@@ -138,6 +139,12 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:link-origins', () => workspace.linkOrigins())
   ipcMain.handle('skilldex:categorize-library', (_event, options?: { force?: boolean }) =>
     workspace.categorizeLibrary(options),
+  )
+  ipcMain.handle('skilldex:list-machine-plugins', () => workspace.listMachinePlugins())
+  ipcMain.handle('skilldex:machine-plugins', (_event, name: string) => workspace.machinePlugins(name))
+  ipcMain.handle('skilldex:available-plugins', (_event, name: string) => workspace.availablePlugins(name))
+  ipcMain.handle('skilldex:machine-plugin-op', (_event, name: string, input: PluginOpInput) =>
+    workspace.machinePluginOp(name, input),
   )
   ipcMain.handle('skilldex:set-skill-tags', (_event, id: string, tags: string[]) => workspace.setSkillTags(id, tags))
   ipcMain.handle('skilldex:tag-skills', (_event, skillIds: string[], change: { add?: string[]; remove?: string[] }) =>

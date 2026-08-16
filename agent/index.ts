@@ -15,11 +15,16 @@
  *   snapshot  → WorkspaceSnapshot
  *   install   ← {"repo":"owner/repo","skillId":…,"scope":"global"|"project","projectName"?} → WorkspaceSnapshot
  *   enable | disable | remove ← {"id":…} → WorkspaceSnapshot
+ *   plugins            → {available, plugins, marketplaces, error?}   (Claude Code plugin inventory)
+ *   plugins-available  → AvailablePlugin[]                             (what this machine's marketplaces offer)
+ *   plugin-op ← {op, plugin, marketplaceSource?, marketplaceName?} → plugins result (after the change)
  */
 
+import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { createConfigStore } from '../electron/main/workspace/config'
 import { resolveProjectDirs } from '../electron/main/workspace/filesystem-source'
 import {
@@ -225,8 +230,156 @@ async function main(): Promise<void> {
       emit(await op)
       return
     }
+    case 'plugins': {
+      emit(await pluginInventory(homeDir))
+      return
+    }
+    case 'plugins-available': {
+      const raw = await claudeJson<{ available?: unknown }>(homeDir, ['plugin', 'list', '--available', '--json'])
+      const list = Array.isArray(raw?.available) ? raw.available : []
+      emit(list.map(normalizeAvailable).filter((entry): entry is NonNullable<typeof entry> => entry !== null))
+      return
+    }
+    case 'plugin-op': {
+      const input = JSON.parse(await readStdin()) as {
+        op: 'install' | 'uninstall' | 'enable' | 'disable'
+        plugin: string
+        marketplaceSource?: string
+        marketplaceName?: string
+      }
+      if (!['install', 'uninstall', 'enable', 'disable'].includes(input.op)) throw new Error(`Unknown plugin op: ${input.op}`)
+      if (!input.plugin || /\s/.test(input.plugin)) throw new Error('Invalid plugin id.')
+      if (input.op === 'install' && input.marketplaceSource && input.marketplaceName) {
+        // Add the marketplace first if this machine doesn't know it yet.
+        const known = await pluginInventory(homeDir)
+        if (!known.marketplaces.some((m) => m.name === input.marketplaceName))
+          await claudeRun(homeDir, ['plugin', 'marketplace', 'add', input.marketplaceSource])
+      }
+      const args =
+        input.op === 'install'
+          ? ['plugin', 'install', input.plugin, '--scope', 'user', '-y']
+          : ['plugin', input.op, input.plugin]
+      await claudeRun(homeDir, args)
+      emit(await pluginInventory(homeDir))
+      return
+    }
     default:
       throw new Error(`Unknown agent command: ${command ?? '(none)'}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code plugins — thin wrapper over the `claude plugin` CLI.
+
+const execFileAsync = promisify(execFile)
+
+/** Find the claude binary: PATH first, then the usual install spots. */
+async function claudeBinary(homeDir: string): Promise<string | null> {
+  const candidates = [
+    'claude',
+    path.join(homeDir, '.local', 'bin', 'claude'),
+    path.join(homeDir, '.claude', 'local', 'claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    path.join(homeDir, '.npm-global', 'bin', 'claude'),
+    path.join(homeDir, '.bun', 'bin', 'claude'),
+  ]
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync(candidate, ['--version'], { timeout: 15_000 })
+      return candidate
+    } catch {
+      // try the next one
+    }
+  }
+  return null
+}
+
+async function claudeRun(homeDir: string, args: string[]): Promise<string> {
+  const bin = await claudeBinary(homeDir)
+  if (!bin) throw new Error('Claude Code CLI (`claude`) not found on this machine.')
+  try {
+    const { stdout } = await execFileAsync(bin, args, { timeout: 240_000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, CI: '1' } })
+    return stdout
+  } catch (cause) {
+    const err = cause as { stderr?: string; stdout?: string; message?: string }
+    const detail = (err.stderr || err.stdout || err.message || '').trim().split('\n').slice(-3).join(' ')
+    throw new Error(`claude ${args.join(' ')} failed: ${detail || 'unknown error'}`)
+  }
+}
+
+async function claudeJson<T>(homeDir: string, args: string[]): Promise<T> {
+  const out = await claudeRun(homeDir, args)
+  // The CLI may print a notice line before the JSON; parse from the first bracket.
+  const start = Math.min(...['[', '{'].map((c) => out.indexOf(c)).filter((i) => i >= 0))
+  if (!Number.isFinite(start)) throw new Error(`claude ${args.join(' ')}: no JSON in output.`)
+  return JSON.parse(out.slice(start)) as T
+}
+
+async function pluginInventory(homeDir: string): Promise<{
+  available: boolean
+  plugins: Array<Record<string, unknown>>
+  marketplaces: Array<Record<string, unknown>>
+  error?: string
+}> {
+  if (!(await claudeBinary(homeDir)))
+    return { available: false, plugins: [], marketplaces: [], error: 'Claude Code CLI (`claude`) not found on this machine.' }
+  const [installed, marketplaces] = await Promise.all([
+    claudeJson<unknown>(homeDir, ['plugin', 'list', '--json']),
+    claudeJson<unknown>(homeDir, ['plugin', 'marketplace', 'list', '--json']),
+  ])
+  const plugins = (Array.isArray(installed) ? installed : [])
+    .map((entry) => normalizeInstalled(entry))
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+  const markets = (Array.isArray(marketplaces) ? marketplaces : [])
+    .map((entry) => normalizeMarketplace(entry))
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+  return { available: true, plugins, marketplaces: markets }
+}
+
+function normalizeInstalled(entry: unknown): Record<string, unknown> | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const e = entry as Record<string, unknown>
+  const id = typeof e.id === 'string' ? e.id : ''
+  if (!id) return null
+  const at = id.lastIndexOf('@')
+  const mcp = typeof e.mcpServers === 'object' && e.mcpServers !== null ? Object.keys(e.mcpServers as object) : undefined
+  return {
+    id,
+    name: at > 0 ? id.slice(0, at) : id,
+    marketplace: at > 0 ? id.slice(at + 1) : '',
+    version: typeof e.version === 'string' ? e.version : 'unknown',
+    scope: typeof e.scope === 'string' ? e.scope : 'user',
+    enabled: e.enabled !== false,
+    ...(typeof e.installPath === 'string' ? { installPath: e.installPath } : {}),
+    ...(typeof e.installedAt === 'string' ? { installedAt: e.installedAt } : {}),
+    ...(typeof e.lastUpdated === 'string' ? { lastUpdated: e.lastUpdated } : {}),
+    ...(mcp && mcp.length ? { mcpServers: mcp } : {}),
+  }
+}
+
+function normalizeMarketplace(entry: unknown): Record<string, unknown> | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const e = entry as Record<string, unknown>
+  if (typeof e.name !== 'string') return null
+  const source = typeof e.source === 'string' ? e.source : 'unknown'
+  const location =
+    typeof e.repo === 'string' ? e.repo : typeof e.url === 'string' ? e.url : typeof e.path === 'string' ? e.path : ''
+  return { name: e.name, source, location }
+}
+
+function normalizeAvailable(entry: unknown): Record<string, unknown> | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const e = entry as Record<string, unknown>
+  const id = typeof e.pluginId === 'string' ? e.pluginId : ''
+  if (!id) return null
+  return {
+    id,
+    name: typeof e.name === 'string' ? e.name : id.split('@')[0],
+    marketplace: typeof e.marketplaceName === 'string' ? e.marketplaceName : id.split('@').pop() ?? '',
+    description: typeof e.description === 'string' ? e.description : '',
+    ...(typeof e.version === 'string' ? { version: e.version } : {}),
+    ...(typeof e.installCount === 'number' ? { installCount: e.installCount } : {}),
   }
 }
 

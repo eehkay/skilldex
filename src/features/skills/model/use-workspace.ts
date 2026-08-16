@@ -14,6 +14,9 @@ import {
   type MachineSnapshot,
   type RepoCatalog,
   type MachineDiff,
+  type MachinePlugins,
+  type AvailablePlugin,
+  type PluginOpInput,
   type SetSkillEnabledInput,
   type SetSyndicationInput,
   type SkillCategory,
@@ -71,6 +74,10 @@ export type WorkspaceState = {
   categorizeLibrary: (options?: { force?: boolean }) => Promise<{ categorized: number; uncategorized: number; usedLlm: boolean } | null>
   getLogs: (limit?: number) => Promise<LogEntry[]>
   setSkillCategory: (id: string, category: SkillCategory | null) => Promise<WorkspaceSnapshot | null>
+  listMachinePlugins: () => Promise<MachinePlugins[]>
+  machinePlugins: (name: string) => Promise<MachinePlugins | null>
+  availablePlugins: (name: string) => Promise<AvailablePlugin[]>
+  machinePluginOp: (name: string, input: PluginOpInput) => Promise<MachinePlugins | null>
   setSkillTags: (id: string, tags: string[]) => Promise<WorkspaceSnapshot | null>
   tagSkills: (skillIds: string[], change: TagChange) => Promise<Omit<TagSkillsResult, 'workspace'> | null>
 }
@@ -390,6 +397,14 @@ export function useWorkspace(): WorkspaceState {
     (id: string, category: SkillCategory | null) => mutate((w) => w.setSkillCategory(id, category)),
     [mutate],
   )
+  const listMachinePlugins = useCallback(async () => (await bridge()?.listMachinePlugins()) ?? [], [])
+  const machinePlugins = useCallback(async (name: string) => (await bridge()?.machinePlugins(name)) ?? null, [])
+  const availablePlugins = useCallback(async (name: string) => (await bridge()?.availablePlugins(name)) ?? [], [])
+  const machinePluginOp = useCallback(
+    async (name: string, input: PluginOpInput) => (await bridge()?.machinePluginOp(name, input)) ?? null,
+    [],
+  )
+
   const setSkillTags = useCallback(
     (id: string, tags: string[]) => mutate((w) => w.setSkillTags(id, tags)),
     [mutate],
@@ -489,6 +504,10 @@ export function useWorkspace(): WorkspaceState {
     setSkillCategory,
     setSkillTags,
     tagSkills,
+    listMachinePlugins,
+    machinePlugins,
+    availablePlugins,
+    machinePluginOp,
     getLogs,
   }
 }
