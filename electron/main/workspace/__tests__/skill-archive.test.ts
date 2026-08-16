@@ -2,7 +2,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { planSkillArchive, readZip, writeSkillArchive } from '../skill-archive'
+import zlib from 'node:zlib'
+import { planSkillArchive, readZip, removeSkillForReplace, writeSkillArchive } from '../skill-archive'
 import { makeZip } from './zip-fixture'
 
 const SKILL_MD = '---\nname: pdf-filler\ndescription: Fills PDFs\n---\n\n# PDF Filler\n'
@@ -21,6 +22,18 @@ describe('readZip', () => {
 
   it('rejects non-zip input', () => {
     expect(() => readZip(Buffer.from('definitely not a zip'))).toThrow('Not a zip archive')
+  })
+
+  it('bounds inflation even when the declared uncompressed size lies', () => {
+    // A highly compressible 8 MB payload whose central directory claims 0 bytes:
+    // the cap must still apply and the lie must be rejected, not inflated blind.
+    const payload = Buffer.alloc(8 * 1024 * 1024, 0x61)
+    const zip = makeZip({ 'big.bin': payload })
+    // Patch the central-directory uncompressed size (offset 24 in the CD header) to 0.
+    const eocd = zip.length - 22
+    const cdOffset = zip.readUInt32LE(eocd + 16)
+    zip.writeUInt32LE(0, cdOffset + 24)
+    expect(() => readZip(zip)).toThrow(/inflates past its declared size|size mismatch/)
   })
 })
 
@@ -96,5 +109,27 @@ describe('writeSkillArchive', () => {
     expect((await fs.readdir(path.join(tmp, '.claude'))).sort()).toEqual(['skills'])
 
     await expect(writeSkillArchive(root, plan)).rejects.toThrow('already exists')
+  })
+
+  it('replaces a dangling symlink at the destination instead of failing', async () => {
+    const root = path.join(tmp, '.claude', 'skills')
+    await fs.mkdir(root, { recursive: true })
+    await fs.symlink(path.join(tmp, 'gone', 'pdf-filler'), path.join(root, 'pdf-filler'))
+    const plan = planSkillArchive(readZip(makeZip({ 'pdf-filler/SKILL.md': SKILL_MD })), 'x')
+    await writeSkillArchive(root, plan)
+    expect((await fs.lstat(path.join(root, 'pdf-filler'))).isDirectory()).toBe(true)
+    // removeSkillForReplace also treats a dangling link as removable, but refuses a live one.
+    await fs.symlink(path.join(tmp, 'gone', 'other'), path.join(root, 'other'))
+    await expect(removeSkillForReplace(root, 'other')).resolves.toBe(false)
+    await fs.mkdir(path.join(tmp, 'live'), { recursive: true })
+    await fs.symlink(path.join(tmp, 'live'), path.join(root, 'linked'))
+    await expect(removeSkillForReplace(root, 'linked')).rejects.toThrow('symlink')
+  })
+
+  it('rejects unsafe paths handed straight to the writer', async () => {
+    const root = path.join(tmp, '.claude', 'skills')
+    await expect(
+      writeSkillArchive(root, { dirName: 'evil', files: [{ path: '../escape.txt', data: Buffer.from('x') }] }),
+    ).rejects.toThrow('Unsafe path')
   })
 })

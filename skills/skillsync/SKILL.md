@@ -74,8 +74,11 @@ curl -s "$HUB/api/machines" | jq '.[] | {machine: .machine.name, error, skills: 
 curl -s "$HUB/api/machine-diff?name=tower" | jq '{onlyOnMachine: [.onlyOnMachine[].name], onlyInLibrary: [.onlyInLibrary[].name], inSync}'
 ```
 `POST /api/converge-machine {name}` installs everything the library has that
-the machine lacks; `POST /api/adopt-from-machine {name, ids:[…]}` pulls
-machine-only skills into the library.
+the machine lacks; `POST /api/adopt-from-machine {name, skillIds:[…]}` pulls
+machine-only skills into the library (ids are the machine's own `skill.id`s
+from the diff or lookup). `POST /api/clear-machine {name}` is the inverse of
+converge — it *uninstalls the library-managed skills* from that machine and
+keeps machine-only ones; it is destructive, confirm before calling it.
 
 **Enable / disable / remove.** Library skill: `POST /api/set-skill-enabled
 {input:{skillId, enabled, target:"local"|"everywhere"}}`; on one machine:

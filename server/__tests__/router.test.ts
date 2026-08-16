@@ -140,4 +140,49 @@ describe('hub API', () => {
     expect(distribute.status).toBe(400)
     expect((await distribute.json()).error).toMatch(/machine/i)
   })
+
+  it('masks API keys on read and keeps the stored key when the mask is sent back', async () => {
+    const config = await (await fetch(`${base}/api/config`)).json()
+    await fetch(`${base}/api/configure-sources`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { ...config, anthropicApiKey: 'sk-ant-secret-1234' } }),
+    })
+    const masked = await (await fetch(`${base}/api/config`)).json()
+    expect(masked.anthropicApiKey).toBe('••••1234')
+    // Saving the masked value back must not overwrite the real key.
+    await fetch(`${base}/api/configure-sources`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { ...masked, includePlugins: false } }),
+    })
+    const again = await (await fetch(`${base}/api/config`)).json()
+    expect(again.anthropicApiKey).toBe('••••1234')
+    expect(again.includePlugins).toBe(false)
+    // Clearing works: an empty value drops the key.
+    await fetch(`${base}/api/configure-sources`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { ...again, anthropicApiKey: '' } }),
+    })
+    expect((await (await fetch(`${base}/api/config`)).json()).anthropicApiKey).toBeUndefined()
+  })
+
+  it('validates categories and caps ordinary request bodies at 1 MB', async () => {
+    const bad = await fetch(`${base}/api/set-skill-category`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'x', category: 'not-a-shelf' }),
+    })
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toMatch(/Unknown category/)
+
+    const big = JSON.stringify({ id: 'x'.repeat(2_000_000) })
+    const tooLarge = await fetch(`${base}/api/toggle-favourite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: big,
+    }).then((r) => r.status).catch(() => 'closed')
+    expect([400, 'closed']).toContain(tooLarge)
+  })
 })

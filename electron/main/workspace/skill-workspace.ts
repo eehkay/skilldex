@@ -8,6 +8,7 @@
  */
 
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { syncAgentLinks } from './agent-links'
 import { logger } from './log'
@@ -35,6 +36,8 @@ import {
   removeSkillDir,
   scaffoldSkill,
   slugify,
+  DISABLED_DIR,
+  inspectSkillPath,
 } from './skill-manager'
 import { createMachineManager, type ExecLike, type MachineManager } from './machines'
 import {
@@ -84,6 +87,8 @@ export type SkillWorkspaceDeps = {
   libraryStore?: LibraryStore
   /** Builds the LLM classifier from config; injected in tests. */
   classifierFactory?: (config: WorkspaceConfig) => ClassifierClient | null
+  /** Identity of the host we run on (for "self" machine records); injected in tests. */
+  self?: { host?: string; user?: string; homeDir?: string }
 }
 
 /** Result of a syndication change: the library view plus the machine's new state. */
@@ -251,10 +256,12 @@ export function createSkillWorkspace({
   knownHostsFile,
   libraryStore = createMemoryLibraryStore(),
   classifierFactory = createClassifierFromConfig,
+  self = {},
 }: SkillWorkspaceDeps): SkillWorkspace {
   const machineManager: MachineManager | null = agentPath
-    ? createMachineManager({ agentPath, execImpl, knownHostsFile })
+    ? createMachineManager({ agentPath, execImpl, knownHostsFile, selfHost: self.host, selfUser: self.user })
     : null
+  const selfHomeDir = self.homeDir ?? os.homedir()
 
   function machines(): MachineManager {
     if (!machineManager) throw new Error('Machine management is not available in this build.')
@@ -266,6 +273,19 @@ export function createSkillWorkspace({
     const machine = config.machines.find((entry) => entry.name === name)
     if (!machine) throw new Error(`Unknown machine: ${name}`)
     return machine
+  }
+
+  /**
+   * A machine record for the very host we run on, when our homeDir is that
+   * host's home, points at the library itself: bulk removals there would
+   * delete the only copy of everything they promise to restore. Refuse.
+   */
+  function assertNotLibraryHost(machine: MachineRecord, action: string): void {
+    if (!machineManager?.isSelf(machine)) return
+    if (path.resolve(homeDir) !== path.resolve(selfHomeDir)) return
+    throw new Error(
+      `${machine.name} is this host — its ~/.claude/skills is the library itself, so ${action} would delete the library. Use the library view instead.`,
+    )
   }
 
   async function snapshotsFor(records: MachineRecord[]): Promise<MachineSnapshot[]> {
@@ -355,10 +375,12 @@ export function createSkillWorkspace({
     }
 
     const existing = (await libraryStore.load())[dirName]
+    // Spread the existing entry so category/adoptedFrom survive; an existing
+    // library copy also keeps the version it was imported at.
     const meta: LibrarySkillMeta = {
+      ...existing,
       repo: input.repo,
       path: skill.path,
-      // An existing library copy keeps the version it was imported at.
       ref: existing?.ref ?? pinnedRef,
       targets: existing?.targets ?? [],
     }
@@ -661,13 +683,15 @@ export function createSkillWorkspace({
       const targets = input.machines?.length ? input.machines : config.machines.map((machine) => machine.name)
       if (targets.length === 0) throw new Error('No machines configured.')
 
+      // Sequential on purpose: each converge does a load→modify→write of the
+      // shared ledger, and concurrent writers would drop each other's targets.
       const results: DistributeSkillResult['results'] = {}
-      await Promise.all(
-        targets.map(async (name) => {
+      for (const name of targets) {
           try {
             const machine = await findMachine(name)
             let replaced = false
             if (input.replace) {
+              assertNotLibraryHost(machine, 'replace')
               const current = await machines().snapshot(machine)
               if (!current.snapshot) throw new Error(current.error ?? 'Machine not reachable.')
               const existing = current.snapshot.skills.find(
@@ -685,8 +709,7 @@ export function createSkillWorkspace({
           } catch (cause) {
             results[name] = { status: 'failed', error: cause instanceof Error ? cause.message : String(cause) }
           }
-        }),
-      )
+      }
       logger.info('skill.distribute', { dirName, results })
       return { dirName, results, workspace: await buildSnapshot(config) }
     },
@@ -978,7 +1001,12 @@ export function createSkillWorkspace({
           if (skill.sourceKind !== 'Personal') throw new Error('Only personal (global) skills can be adopted.')
           const dirName = dirNameOf(skill)
           const dest = path.join(root, dirName)
-          const exists = await fs.access(dest).then(() => true).catch(() => false)
+          // A disabled library copy still counts as "in the library"; a
+          // dangling link is debris and gets replaced below.
+          const states = await Promise.all(
+            [dest, path.join(root, DISABLED_DIR, dirName)].map((candidate) => inspectSkillPath(candidate)),
+          )
+          const exists = states.includes('present')
           const target: SyndicationTarget = { machine: name, scope: 'global' }
           logger.debug('sync.adopt.skill', {
             machine: name, skill: dirName, files: files.length, symlink: skill.isSymlink,
@@ -989,11 +1017,9 @@ export function createSkillWorkspace({
             // Already in the library — just record that this machine has it.
             const existing = (await libraryStore.load())[dirName]
             await libraryStore.set(dirName, {
-              repo: existing?.repo ?? '',
-              path: existing?.path ?? '',
-              ref: existing?.ref ?? '',
+              ...EMPTY_META,
+              ...existing,
               targets: withTarget(existing?.targets ?? [], target),
-              adoptedFrom: existing?.adoptedFrom,
             })
             logger.info('sync.adopt.linked', { machine: name, skill: dirName, reason: 'already in library' })
             adopted.push(dirName)
@@ -1032,18 +1058,16 @@ export function createSkillWorkspace({
             logger.debug('sync.adopt.originNoMatch', { machine: name, skill: dirName, repo: originRepo })
           }
 
-          await fs.mkdir(dest, { recursive: true })
-          try {
-            for (const file of files) {
-              const target = path.join(dest, ...file.path.split('/'))
-              await fs.mkdir(path.dirname(target), { recursive: true })
-              await fs.writeFile(target, Buffer.from(file.base64, 'base64'))
-            }
-          } catch (cause) {
-            await fs.rm(dest, { recursive: true, force: true }).catch(() => {})
-            throw cause
-          }
+          // Same writer as zip/file import: rejects `..`/absolute paths from
+          // the (remote-supplied) file list, stages, then renames atomically.
+          await writeSkillArchive(root, {
+            dirName,
+            files: files.map((file) => ({ path: file.path, data: Buffer.from(file.base64, 'base64') })),
+          })
+          const existing = (await libraryStore.load())[dirName]
           await libraryStore.set(dirName, {
+            ...EMPTY_META,
+            ...existing,
             repo: originRepo ?? '',
             path: '',
             ref: '',
@@ -1100,11 +1124,9 @@ export function createSkillWorkspace({
             snapshot = await machines().writeSkill(machine, { dirName, files: payload })
           }
           await libraryStore.set(dirName, {
-            repo: meta?.repo ?? '',
-            path: meta?.path ?? '',
-            ref: meta?.ref ?? '',
+            ...EMPTY_META,
+            ...meta,
             targets: withTarget(meta?.targets ?? [], target),
-            adoptedFrom: meta?.adoptedFrom,
           })
           logger.info('sync.converge.installed', { machine: name, skill: dirName, via: meta?.repo && meta.ref ? 'repo' : 'files' })
           installed.push(dirName)
@@ -1124,6 +1146,7 @@ export function createSkillWorkspace({
 
     async clearMachine(name, dirNames) {
       const machine = await findMachine(name)
+      assertNotLibraryHost(machine, 'clearing it')
       const config = await configStore.load()
       const remote = await machines().snapshot(machine)
       if (!remote.snapshot) throw new Error(remote.error ?? `${name} is unreachable.`)
@@ -1251,6 +1274,13 @@ export function createSkillWorkspace({
 function dirNameOf(skill: SkillRecord): string {
   return path.basename(skill.realPath)
 }
+
+/**
+ * Baseline for a ledger entry. Writers spread `{ ...EMPTY_META, ...existing, …changes }`
+ * so optional fields (category, adoptedFrom) survive — `libraryStore.set` replaces
+ * the entry, it does not merge.
+ */
+const EMPTY_META: LibrarySkillMeta = { repo: '', path: '', ref: '', targets: [] }
 
 function targetKey(target: SyndicationTarget): string {
   return `${target.machine}\u0000${target.scope}\u0000${target.projectName ?? ''}`

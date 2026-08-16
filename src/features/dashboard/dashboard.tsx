@@ -235,6 +235,7 @@ export function Dashboard() {
       setSelectedId(null)
       setActiveRepo(null)
       setActiveMachine(null)
+      setShowLogs(false)
     }
     setQuery(value)
   }

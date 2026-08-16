@@ -25,9 +25,12 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge, o
   const [report, setReport] = useState<string | null>(null)
   const [failures, setFailures] = useState<Record<string, string>>({})
 
-  const refresh = async () => {
+  // Reloading the diff must not erase the report an action just set — the
+  // actions call refresh() right after setReport(); only a machine switch
+  // (the effect below) starts with a clean slate.
+  const refresh = async ({ keepReport = false }: { keepReport?: boolean } = {}) => {
     setLoading(true)
-    setReport(null)
+    if (!keepReport) setReport(null)
     try {
       const next = await loadDiff(machineName)
       setDiff(next)
@@ -61,7 +64,7 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge, o
         setReport(`Adopted ${result.adopted.length} into the library${Object.keys(result.failed).length ? `, ${Object.keys(result.failed).length} failed` : ''}.`)
         setFailures(result.failed)
       }
-      await refresh()
+      await refresh({ keepReport: true })
     } catch (cause) {
       setReport(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -79,7 +82,7 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge, o
         setReport(`Installed ${result.installed.length} on ${machineName}${Object.keys(result.failed).length ? `, ${Object.keys(result.failed).length} failed` : ''}.`)
         setFailures(result.failed)
       }
-      await refresh()
+      await refresh({ keepReport: true })
     } catch (cause) {
       setReport(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -100,7 +103,7 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge, o
         setReport(parts.join(', ') + '. Bring skills back selectively from the list below.')
         setFailures(result.failed)
       }
-      await refresh()
+      await refresh({ keepReport: true })
     } catch (cause) {
       setReport(cause instanceof Error ? cause.message : String(cause))
     } finally {

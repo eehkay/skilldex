@@ -312,6 +312,23 @@ describe('machine diff, adopt, converge', () => {
     expect(diff.inSync).toBe(0)
   })
 
+  it('adopt treats a disabled library copy as already present and keeps its ledger fields', async () => {
+    // Park a library copy of "handmade" under .disabled with a manual category.
+    const disabled = path.join(tmp, '.claude', 'skills', '.disabled', 'handmade')
+    await fs.mkdir(disabled, { recursive: true })
+    await fs.writeFile(path.join(disabled, 'SKILL.md'), '---\nname: handmade\n---\n')
+    const store = createLibraryStore(path.join(tmp, 'library.json'))
+    await store.set('handmade', { repo: '', path: '', ref: '', targets: [], category: 'documents', categorySource: 'manual' })
+
+    const result = await ws.adoptFromMachine('tower', ['/home/k/.claude/skills/handmade'])
+    expect(result.adopted).toEqual(['handmade'])
+    // No second, enabled copy was written…
+    await expect(fs.access(path.join(tmp, '.claude', 'skills', 'handmade'))).rejects.toThrow()
+    // …and the entry gained the target without losing its category.
+    const ledger = JSON.parse(await fs.readFile(path.join(tmp, 'library.json'), 'utf8')).skills
+    expect(ledger.handmade).toMatchObject({ category: 'documents', categorySource: 'manual', targets: [{ machine: 'tower', scope: 'global' }] })
+  })
+
   it('adopt copies origin-less skills and re-imports repo-sourced ones pinned', async () => {
     const result = await ws.adoptFromMachine('tower', ['/home/k/.claude/skills/handmade', '/home/k/.claude/skills/tdd'])
     expect(result.adopted.sort()).toEqual(['handmade', 'tdd'])
@@ -546,8 +563,48 @@ describe('agent-facing API: import files, lookup, distribute', () => {
     expect(calls.map((call) => call.command)).toContain('write-skill')
 
     await expect(ws.distributeSkill({ name: 'nope' })).rejects.toThrow('No library skill')
+
+    // Ledger fields set before distribution survive the converge write.
+    const skill = (await ws.getSnapshot()).skills.find((entry) => entry.name === 'hello-world')!
+    await ws.setSkillCategory(skill.id, 'documents')
+    await ws.distributeSkill({ name: 'hello-world', replace: true })
+    const ledger = JSON.parse(await fs.readFile(path.join(tmp, 'library.json'), 'utf8')).skills
+    expect(ledger['hello-world']).toMatchObject({ category: 'documents', categorySource: 'manual', targets: [{ machine: 'tower' }] })
     const unknown = await ws.distributeSkill({ name: 'hello-world', machines: ['ghost'] })
     expect(unknown.results.ghost.status).toBe('failed')
     expect(unknown.results.ghost.error).toContain('Unknown machine')
+  })
+
+  it('refuses to clear or replace on a self machine whose home is the library', async () => {
+    const agentPath = path.join(tmp, 'agent.js')
+    const selfWs = createSkillWorkspace({
+      homeDir: tmp,
+      configStore: createConfigStore(path.join(tmp, 'config-self.json')),
+      libraryStore: createLibraryStore(path.join(tmp, 'library-self.json')),
+      fetchImpl: fakeFetch(routes()),
+      agentPath,
+      execImpl: remote(),
+      self: { host: 'thisbox', user: 'me', homeDir: tmp },
+    })
+    await selfWs.addMachine({ name: 'here', host: 'thisbox.tail', user: 'me' })
+    await selfWs.importSkillFiles({ files: FILES, scope: 'global' })
+    await expect(selfWs.clearMachine('here')).rejects.toThrow('library itself')
+    const result = await selfWs.distributeSkill({ name: 'hello-world', machines: ['here'], replace: true })
+    expect(result.results.here.status).toBe('failed')
+    expect(result.results.here.error).toContain('library itself')
+    // The library copy is untouched.
+    await expect(fs.access(path.join(tmp, '.claude', 'skills', 'hello-world', 'SKILL.md'))).resolves.toBeUndefined()
+    // A different-home machine on the same host is not the library — allowed.
+    const otherWs = createSkillWorkspace({
+      homeDir: tmp,
+      configStore: createConfigStore(path.join(tmp, 'config-other.json')),
+      libraryStore: createLibraryStore(path.join(tmp, 'library-other.json')),
+      fetchImpl: fakeFetch(routes()),
+      agentPath,
+      execImpl: remote(),
+      self: { host: 'thisbox', user: 'me', homeDir: path.join(tmp, 'elsewhere') },
+    })
+    await otherWs.addMachine({ name: 'here', host: 'thisbox', user: 'me' })
+    await expect(otherWs.clearMachine('here')).resolves.toMatchObject({ failed: {} })
   })
 })

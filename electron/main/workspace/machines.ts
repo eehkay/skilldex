@@ -94,6 +94,8 @@ export type MachineManager = {
     input: { dirName: string; files: Array<{ path: string; base64: string }> },
   ): Promise<WorkspaceSnapshot>
   skillOp(machine: MachineRecord, op: 'enable' | 'disable' | 'remove', id: string): Promise<WorkspaceSnapshot>
+  /** Does this record point at the host we're running on, as our user (local bash, no SSH)? */
+  isSelf(machine: MachineRecord): boolean
 }
 
 export function createMachineManager({
@@ -219,6 +221,8 @@ export function createMachineManager({
   }
 
   return {
+    isSelf,
+
     async ping(machine) {
       await agentCall<{ ok: boolean }>(machine, 'ping', { timeoutMs: HASH_TIMEOUT })
     },

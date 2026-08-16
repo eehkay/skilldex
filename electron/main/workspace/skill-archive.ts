@@ -17,7 +17,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { parseFrontmatter } from './frontmatter'
-import { slugify } from './skill-manager'
+import { clearDanglingSkillPath, inspectSkillPath, slugify, DISABLED_DIR } from './skill-manager'
 
 export type ArchiveEntry = { path: string; data: Buffer }
 
@@ -63,6 +63,9 @@ export function readZip(bytes: Buffer): ArchiveEntry[] {
 
     unpacked += uncompressedSize
     if (unpacked > MAX_UNPACKED_BYTES) throw new Error('Archive unpacks to more than 64 MB.')
+    // The declared size is untrusted: an entry claiming 0 must not switch the
+    // inflate cap off, so bound every entry by what the archive has left.
+    const remaining = MAX_UNPACKED_BYTES - unpacked + uncompressedSize
 
     if (localOffset + 30 > bytes.length || bytes.readUInt32LE(localOffset) !== SIG_LOCAL)
       throw new Error(`Corrupt zip: bad local header for ${name}.`)
@@ -72,10 +75,17 @@ export function readZip(bytes: Buffer): ArchiveEntry[] {
     const raw = bytes.subarray(dataStart, dataStart + compressedSize)
     if (raw.length !== compressedSize) throw new Error(`Corrupt zip: truncated data for ${name}.`)
 
-    const data =
-      method === METHOD_STORED
-        ? Buffer.from(raw)
-        : zlib.inflateRawSync(raw, { maxOutputLength: uncompressedSize || undefined })
+    let data: Buffer
+    try {
+      data =
+        method === METHOD_STORED
+          ? Buffer.from(raw)
+          : zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, Math.min(remaining, uncompressedSize || remaining)) })
+    } catch (cause) {
+      const code = (cause as { code?: string }).code
+      if (code === 'ERR_BUFFER_TOO_LARGE') throw new Error(`Archive entry ${name} inflates past its declared size.`)
+      throw new Error(`Corrupt zip: could not inflate ${name}.`)
+    }
     if (data.length !== uncompressedSize) throw new Error(`Corrupt zip: size mismatch for ${name}.`)
     entries.push({ path: name, data })
   }
@@ -161,18 +171,27 @@ export function planSkillArchive(entries: ArchiveEntry[], fallbackName: string):
  */
 export async function writeSkillArchive(root: string, plan: SkillArchive): Promise<string> {
   const dest = path.join(root, plan.dirName)
-  const disabled = path.join(root, '.disabled', plan.dirName)
+  const disabled = path.join(root, DISABLED_DIR, plan.dirName)
   for (const existing of [dest, disabled]) {
-    if (await fs.access(existing).then(() => true).catch(() => false))
-      throw new Error(`A skill named "${plan.dirName}" already exists.`)
+    // A dangling symlink is debris (e.g. a wiped ~/.agents/skills) — replace
+    // it; a real entry, enabled or disabled, is protected.
+    const state = await inspectSkillPath(existing)
+    if (state === 'present') throw new Error(`A skill named "${plan.dirName}" already exists.`)
+    if (state === 'dangling') await clearDanglingSkillPath(existing)
   }
+  // Callers may hand us paths straight from an upload or a remote agent —
+  // validate here too, not only in planSkillArchive.
+  const files = plan.files
+    .map((file) => ({ path: safeRelativePath(file.path), data: file.data }))
+    .filter((file): file is { path: string; data: Buffer } => file.path !== null)
+  if (files.length === 0) throw new Error('No files to write.')
 
   await fs.mkdir(root, { recursive: true })
   // Stage beside the root, not inside it: the scanner doesn't skip dot-dirs,
   // and a sibling stays on the same filesystem so the final rename is atomic.
   const staging = await fs.mkdtemp(path.join(path.dirname(root), `.skilldex-import-`))
   try {
-    for (const file of plan.files) {
+    for (const file of files) {
       const target = path.join(staging, file.path)
       await fs.mkdir(path.dirname(target), { recursive: true })
       await fs.writeFile(target, file.data)
@@ -193,9 +212,13 @@ export async function writeSkillArchive(root: string, plan: SkillArchive): Promi
 export async function removeSkillForReplace(root: string, dirName: string): Promise<boolean> {
   let removed = false
   for (const target of [path.join(root, dirName), path.join(root, '.disabled', dirName)]) {
-    const info = await fs.lstat(target).catch(() => null)
-    if (!info) continue
-    if (info.isSymbolicLink())
+    const state = await inspectSkillPath(target)
+    if (state === 'missing') continue
+    if (state === 'dangling') {
+      await clearDanglingSkillPath(target)
+      continue
+    }
+    if ((await fs.lstat(target)).isSymbolicLink())
       throw new Error(`"${dirName}" is a symlink to another location — update its target instead of replacing it.`)
     await fs.rm(target, { recursive: true, force: true })
     removed = true

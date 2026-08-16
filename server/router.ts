@@ -12,7 +12,9 @@
 import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { logger, recentLogs } from '../electron/main/workspace/log'
+import { CATEGORY_IDS } from '../electron/main/workspace/categorizer'
 import type { SkillWorkspace } from '../electron/main/workspace/skill-workspace'
+import type { SkillCategory, WorkspaceConfig } from '../electron/main/workspace/types'
 
 type Handler = (query: URLSearchParams, body: Record<string, unknown>) => Promise<unknown>
 
@@ -25,9 +27,14 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
 
   return new Map<string, Handler>([
     ['GET /api/logs', async (q) => recentLogs(Number(q.get('limit')) || 200)],
-    ['GET /api/config', async () => workspace.getConfig()],
+    // API keys are write-only over HTTP: reads get a masked marker, and a
+    // masked marker sent back on save keeps the stored key. The hub is
+    // tailnet-only, but a plaintext key on an unauthenticated route is still
+    // one curl away from every peer.
+    ['GET /api/config', async () => redactSecrets(await workspace.getConfig())],
     ['GET /api/snapshot', async () => workspace.getSnapshot()],
-    ['POST /api/configure-sources', async (_q, body) => workspace.configureSources(body.config as never)],
+    ['POST /api/configure-sources', async (_q, body) =>
+      workspace.configureSources(restoreSecrets(body.config as WorkspaceConfig, await workspace.getConfig()))],
     ['GET /api/skill-readme', async (q, b) => workspace.getSkillReadme(id(q, b))],
     ['GET /api/skill-files', async (q, b) => workspace.listSkillFiles(id(q, b))],
     ['POST /api/enable-skill', async (q, b) => workspace.enableSkill(id(q, b))],
@@ -99,7 +106,10 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     ['POST /api/set-skill-category', async (_q, body) => {
       const id = typeof body.id === 'string' ? body.id : ''
       if (!id) throw new Error('Missing skill id.')
-      return workspace.setSkillCategory(id, (body.category as never) ?? null)
+      const category = body.category ?? null
+      if (category !== null && !CATEGORY_IDS.includes(category as SkillCategory))
+        throw new Error(`Unknown category "${String(category)}". One of: ${CATEGORY_IDS.join(', ')}.`)
+      return workspace.setSkillCategory(id, category as SkillCategory | null)
     }],
     ['POST /api/clear-machine', async (_q, body) => {
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
@@ -130,7 +140,7 @@ export async function handleApi(
   let body: Record<string, unknown> = {}
   if (request.method === 'POST') {
     try {
-      const raw = await readBody(request)
+      const raw = await readBody(request, LARGE_BODY_ROUTES.has(url.pathname) ? LARGE_BODY_LIMIT : BODY_LIMIT)
       body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
     } catch {
       respond(response, 400, { error: 'Invalid JSON body.' })
@@ -160,14 +170,40 @@ function respond(response: ServerResponse, status: number, payload: unknown): vo
   response.end(data)
 }
 
-function readBody(request: IncomingMessage): Promise<string> {
+/** Default request-body cap; only the upload routes get the large one. */
+const BODY_LIMIT = 1_000_000
+/** Base64 skill archives / file bundles (see MAX_ARCHIVE_BYTES). */
+const LARGE_BODY_LIMIT = 48_000_000
+const LARGE_BODY_ROUTES = new Set(['/api/import-skill-archive', '/api/import-skill-files'])
+
+const SECRET_KEYS = ['anthropicApiKey', 'openRouterApiKey'] as const
+const MASK = '••••'
+
+function redactSecrets(config: WorkspaceConfig): WorkspaceConfig {
+  const out = { ...config }
+  for (const key of SECRET_KEYS) {
+    const value = out[key]
+    if (value) out[key] = `${MASK}${value.slice(-4)}`
+  }
+  return out
+}
+
+function restoreSecrets(incoming: WorkspaceConfig, stored: WorkspaceConfig): WorkspaceConfig {
+  const out = { ...incoming }
+  for (const key of SECRET_KEYS) {
+    const value = out[key]
+    if (typeof value === 'string' && value.startsWith(MASK)) out[key] = stored[key]
+  }
+  return out
+}
+
+function readBody(request: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
     request.on('data', (chunk: Buffer) => {
       size += chunk.length
-      // Generous enough for a base64-encoded skill archive (see MAX_ARCHIVE_BYTES).
-      if (size > 48_000_000) {
+      if (size > limit) {
         reject(new Error('Body too large'))
         request.destroy()
         return

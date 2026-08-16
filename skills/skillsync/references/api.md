@@ -71,8 +71,8 @@ refused. Folder name = `name` → SKILL.md frontmatter `name` → wrapping folde
 | `POST /api/refresh-machine` | `{name}` | one machine's snapshot |
 | `GET /api/machine-diff?name=` | | `{onlyOnMachine, onlyInLibrary, inSync, error?}` |
 | `POST /api/converge-machine` | `{name, dirNames?}` | install library-only skills onto the machine → `{installed, failed, machine, workspace}` |
-| `POST /api/clear-machine` | `{name, dirNames?}` | remove machine-only skills |
-| `POST /api/adopt-from-machine` | `{name, ids:[machine skill ids]}` | pull into library → `{adopted, failed, workspace}` |
+| `POST /api/clear-machine` | `{name, dirNames?}` | **destructive** — uninstall library-managed skills from the machine (keeps machine-only ones) → `{removed, kept, failed}` |
+| `POST /api/adopt-from-machine` | `{name, skillIds:[machine skill ids]}` | pull into library → `{adopted, failed, workspace}` |
 | `POST /api/machine-install` | `{name, input:{repo, skillId, scope, projectName?}}` | catalog skill → machine (via library) |
 | `POST /api/set-syndication` | `{input:{skillId, machine, enabled, scope, projectName?}}` | repo-backed library skills only; prefer `/api/distribute` |
 | `POST /api/machine-skill-op` | `{name, op:"enable"\|"disable"\|"remove", id}` | `id` = machine-side skill id |
