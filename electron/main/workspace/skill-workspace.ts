@@ -56,6 +56,7 @@ import {
 import type {
   ApplyUpdatesResult,
   LinkOriginsResult,
+  TagChange,
   CheckUpdatesResult,
   CreateSkillInput,
   DistributeSkillInput,
@@ -269,6 +270,16 @@ export type SkillWorkspace = {
   categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
   /** Manually set (or clear with null) a library skill's category. */
   setSkillCategory(skillId: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
+  /**
+   * Replace a library skill's tags. Tags are normalized (see normalizeTag);
+   * an empty list removes the field.
+   */
+  setSkillTags(skillId: string, tags: string[]): Promise<WorkspaceSnapshot>
+  /**
+   * Add and/or remove tags across many library skills at once. Unknown or
+   * non-library ids are skipped and reported in `skipped`.
+   */
+  tagSkills(skillIds: string[], change: TagChange): Promise<{ workspace: WorkspaceSnapshot; tagged: number; skipped: string[] }>
 }
 
 export type CategorizeResult = {
@@ -366,14 +377,7 @@ export function createSkillWorkspace({
    */
   async function pinOrigin(dirName: string, origin: { repo: string; path: string; ref: string }): Promise<void> {
     const existing = (await libraryStore.load())[dirName]
-    await libraryStore.set(dirName, {
-      repo: origin.repo,
-      path: origin.path,
-      ref: origin.ref,
-      targets: existing?.targets ?? [],
-      ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
-      ...(existing?.category ? { category: existing.category, categorySource: existing.categorySource, categoryConfidence: existing.categoryConfidence } : {}),
-    })
+    await libraryStore.set(dirName, { ...EMPTY_META, ...existing, repo: origin.repo, path: origin.path, ref: origin.ref })
     logger.info('origin.linked', { skill: dirName, repo: origin.repo, ref: origin.ref })
   }
 
@@ -1481,7 +1485,73 @@ export function createSkillWorkspace({
       )
       return buildSnapshot(await configStore.load())
     },
+
+    async setSkillTags(skillId, tags) {
+      const skill = await resolveKnown(skillId)
+      if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
+      const name = dirNameOf(skill)
+      const existing = (await libraryStore.load())[name]
+      await libraryStore.set(name, withTags({ ...EMPTY_META, ...existing }, normalizeTags(tags)))
+      return buildSnapshot(await configStore.load())
+    },
+
+    async tagSkills(skillIds, change) {
+      const add = normalizeTags(change.add ?? [])
+      const remove = new Set(normalizeTags(change.remove ?? []))
+      if (add.length === 0 && remove.size === 0) throw new Error('Nothing to change.')
+      const skipped: string[] = []
+      const dirNames: string[] = []
+      for (const id of skillIds) {
+        const skill = await resolveKnown(id)
+        if (!skill || skill.sourceKind !== 'Personal') skipped.push(id)
+        else dirNames.push(dirNameOf(skill))
+      }
+      await libraryStore.update((skills) => {
+        for (const name of dirNames) {
+          const current = skills[name]?.tags ?? []
+          const next = normalizeTags([...current.filter((t) => !remove.has(t)), ...add])
+          skills[name] = withTags({ ...EMPTY_META, ...skills[name] }, next)
+        }
+      })
+      logger.info('tags.bulk', { tagged: dirNames.length, skipped: skipped.length, add, remove: [...remove] })
+      return { workspace: await buildSnapshot(await configStore.load()), tagged: dirNames.length, skipped }
+    },
   }
+}
+
+/** Attach a normalized tag list to a ledger entry; empty removes the field. */
+function withTags(meta: LibrarySkillMeta, tags: string[]): LibrarySkillMeta {
+  const { tags: _tags, ...rest } = meta
+  return tags.length ? { ...rest, tags } : rest
+}
+
+const TAG_MAX_LENGTH = 32
+const TAGS_MAX = 20
+
+/**
+ * Tag vocabulary is the user's own, so normalization only prevents accidental
+ * forks: lowercase, trimmed, internal whitespace/underscores → '-', and any
+ * character outside [a-z0-9._/:-] dropped. Empty results are discarded.
+ */
+export function normalizeTag(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9._/:-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, TAG_MAX_LENGTH)
+}
+
+export function normalizeTags(raw: string[]): string[] {
+  const seen = new Set<string>()
+  for (const value of raw) {
+    const tag = normalizeTag(value)
+    if (tag) seen.add(tag)
+    if (seen.size >= TAGS_MAX) break
+  }
+  return [...seen].sort()
 }
 
 /** Canonical folder name of a skill (its realPath's basename). */

@@ -139,6 +139,10 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:categorize-library', (_event, options?: { force?: boolean }) =>
     workspace.categorizeLibrary(options),
   )
+  ipcMain.handle('skilldex:set-skill-tags', (_event, id: string, tags: string[]) => workspace.setSkillTags(id, tags))
+  ipcMain.handle('skilldex:tag-skills', (_event, skillIds: string[], change: { add?: string[]; remove?: string[] }) =>
+    workspace.tagSkills(skillIds, change),
+  )
   ipcMain.handle('skilldex:set-skill-category', (_event, id: string, category: SkillCategory | null) =>
     workspace.setSkillCategory(id, category),
   )

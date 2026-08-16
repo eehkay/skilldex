@@ -1,4 +1,4 @@
-import { FileText, GitFork, Server, Tag } from 'lucide-react'
+import { CheckSquare, FileText, GitFork, Hash, Server, Square, Tag } from 'lucide-react'
 import { CATEGORY_LABELS, scopePillClass, shortRef, type Skill } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { SkillToggle } from './skill-toggle'
@@ -8,9 +8,25 @@ type SkillCardProps = {
   onOpen: () => void
   onToggle: () => void
   onToggleFavourite: () => void
+  /**
+   * Select mode: clicking the card toggles selection instead of opening it.
+   * `selected: undefined` means this card cannot be selected (not a library
+   * skill) and renders dimmed.
+   */
+  selectable?: boolean
+  selected?: boolean
+  onSelect?: () => void
 }
 
-export function SkillCard({ skill, onOpen, onToggle, onToggleFavourite }: SkillCardProps) {
+export function SkillCard({ skill, onOpen, onToggle, onToggleFavourite, selectable = false, selected, onSelect }: SkillCardProps) {
+  const canSelect = selectable && selected !== undefined
+  const activate = () => {
+    if (selectable) {
+      if (canSelect) onSelect?.()
+      return
+    }
+    onOpen()
+  }
   const chips = skill.scope === 'project' ? skill.projects.slice(0, 2) : []
   // Where the skill came from: the library ledger (imported skills) or the
   // skills-CLI lock file (origin), whichever knows.
@@ -22,16 +38,28 @@ export function SkillCard({ skill, onOpen, onToggle, onToggleFavourite }: SkillC
     <div
       role="button"
       tabIndex={0}
-      onClick={onOpen}
+      onClick={activate}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          onOpen()
+          activate()
         }
       }}
-      className="flex cursor-pointer flex-col gap-3 rounded-[13px] border border-[#232328] bg-[#101013] p-4 text-left transition hover:-translate-y-0.5 hover:border-[#3a3a42] focus-visible:border-[#3a3a42] focus-visible:outline-none"
+      aria-selected={canSelect ? selected : undefined}
+      className={`flex flex-col gap-3 rounded-[13px] border bg-[#101013] p-4 text-left transition focus-visible:outline-none ${
+        selectable && !canSelect
+          ? 'cursor-not-allowed border-[#1c1c20] opacity-40'
+          : selected
+            ? 'cursor-pointer border-[#f97316] bg-[#141110]'
+            : 'cursor-pointer border-[#232328] hover:-translate-y-0.5 hover:border-[#3a3a42] focus-visible:border-[#3a3a42]'
+      }`}
     >
       <div className="flex items-start gap-3">
+        {canSelect && (
+          <span className="mt-2.5 shrink-0 text-[#a1a1aa]">
+            {selected ? <CheckSquare className="size-4 text-[#fb923c]" /> : <Square className="size-4" />}
+          </span>
+        )}
         <div
           className="grid size-10 shrink-0 place-items-center rounded-[11px] font-mono text-[15px] font-semibold"
           style={{ background: skill.iconBg, color: skill.iconFg }}
@@ -66,6 +94,19 @@ export function SkillCard({ skill, onOpen, onToggle, onToggleFavourite }: SkillC
             <Tag className="size-3 shrink-0 text-[#71717a]" />
             {CATEGORY_LABELS[skill.library.category]}
           </span>
+        )}
+        {(skill.library?.tags ?? []).slice(0, 3).map((tag) => (
+          <span
+            key={tag}
+            title={`Tag: ${tag}`}
+            className="flex items-center gap-0.5 rounded-md border border-[#2a2a30] bg-[#15151a] px-1.5 py-0.5 text-[11px] text-[#a1a1aa]"
+          >
+            <Hash className="size-3 shrink-0 text-[#52525b]" />
+            {tag}
+          </span>
+        ))}
+        {(skill.library?.tags?.length ?? 0) > 3 && (
+          <span className="text-[11px] text-[#52525b]">+{(skill.library?.tags?.length ?? 0) - 3}</span>
         )}
         {provenance && (
           <span

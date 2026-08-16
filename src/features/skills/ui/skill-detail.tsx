@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Serv
 import { CATEGORY_LABELS, CATEGORY_ORDER, scopePillClass, shortRef, type MachineSnapshot, type OriginCandidate, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillCategory, type SkillFile, formatSize, dirNameOf } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
 import { OriginFinderPanel } from './origin-finder-panel'
+import { TagEditor } from './tag-editor'
 import { SkillToggle } from './skill-toggle'
 
 type SkillDetailProps = {
@@ -18,6 +19,9 @@ type SkillDetailProps = {
   onSetSyndication: (input: SetSyndicationInput) => Promise<void>
   onSetSkillEnabled: (input: SetSkillEnabledInput) => Promise<void>
   onSetCategory: (category: SkillCategory | null) => Promise<void>
+  /** Every tag in use across the library, for autocomplete. */
+  allTags: string[]
+  onSetTags: (tags: string[]) => Promise<void>
   findOrigin: (id: string) => Promise<OriginCandidate[]>
   onLinkOrigin: (origin: { repo: string; path: string; ref: string }) => Promise<void>
   onBack: () => void
@@ -25,7 +29,7 @@ type SkillDetailProps = {
 
 type Tab = 'instructions' | 'files' | 'activity'
 
-export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onSetCategory, findOrigin, onLinkOrigin, onBack }: SkillDetailProps) {
+export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onSetCategory, allTags, onSetTags, findOrigin, onLinkOrigin, onBack }: SkillDetailProps) {
   const [tab, setTab] = useState<Tab>('instructions')
   const [readme, setReadme] = useState<string | null>(null)
   const [files, setFiles] = useState<SkillFile[] | null>(null)
@@ -235,6 +239,18 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
                     }. Choose one to lock it in.`}
               </div>
             )}
+          </>
+        )}
+
+        {skill.scope === 'global' && (
+          <>
+            <div className="mb-2.5 mt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#52525b]">
+              Tags
+            </div>
+            <TagEditor tags={skill.library?.tags ?? []} suggestions={allTags} onChange={onSetTags} />
+            <div className="mt-1.5 text-[11px] text-[#52525b]">
+              Your own labels — filter the library by any combination. Stored in the ledger, never in the skill files.
+            </div>
           </>
         )}
 

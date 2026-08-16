@@ -23,6 +23,8 @@ import type {
   SkillCategory,
   SkillFile,
   SyndicationResult,
+  TagChange,
+  TagSkillsResult,
   WorkspaceConfig,
   WorkspaceSnapshot,
 } from '@/features/skills/model/skills'
@@ -70,6 +72,8 @@ declare global {
         linkOrigins(): Promise<LinkOriginsResult>
         categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
         setSkillCategory(id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
+        setSkillTags(id: string, tags: string[]): Promise<WorkspaceSnapshot>
+        tagSkills(skillIds: string[], change: TagChange): Promise<TagSkillsResult>
       }
     }
   }

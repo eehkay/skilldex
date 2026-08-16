@@ -6,7 +6,7 @@ import { createConfigStore } from '../config'
 import { createLibraryStore } from '../library-store'
 import { findOriginCandidates } from '../origin-finder'
 import type { FetchLike, RepoScan } from '../repo-catalog'
-import { createSkillWorkspace, type SkillWorkspace } from '../skill-workspace'
+import { createSkillWorkspace, type SkillWorkspace, normalizeTag, normalizeTags } from '../skill-workspace'
 
 const SLUG = 'acme/skills'
 const API = `https://api.github.com/repos/${SLUG}`
@@ -167,5 +167,81 @@ describe('checkUpdates / applyUpdates / linkOrigin', () => {
 
     // Idempotent once everything that can be pinned is pinned.
     expect((await ws.linkOrigins()).linked).toEqual([])
+  })
+})
+
+describe('tags', () => {
+  it('normalizes: lowercase, whitespace/underscores → hyphen, junk dropped, deduped, sorted', () => {
+    expect(normalizeTag('  Client: Del Mar ')).toBe('client:-del-mar')
+    expect(normalizeTag('My_Tag')).toBe('my-tag')
+    expect(normalizeTag('--weird--')).toBe('weird')
+    expect(normalizeTag('émoji 🎉!!')).toBe('moji')
+    expect(normalizeTag('   ')).toBe('')
+    expect(normalizeTags(['Zed', 'alpha', 'ALPHA', '', 'alpha '])).toEqual(['alpha', 'zed'])
+  })
+})
+
+describe('setSkillTags / tagSkills', () => {
+  let tmp: string
+  let ws: SkillWorkspace
+  let gh: ReturnType<typeof fakeGitHub>
+  beforeEach(async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-tags-'))
+    gh = fakeGitHub()
+    ws = createSkillWorkspace({
+      homeDir: tmp,
+      configStore: createConfigStore(path.join(tmp, 'config.json')),
+      libraryStore: createLibraryStore(path.join(tmp, 'library.json')),
+      fetchImpl: gh.impl,
+    })
+    await ws.addSkillRepo(SLUG)
+    await ws.installRepoSkill({ repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+    await ws.createSkill({ name: 'other', description: 'Other', scope: 'global' })
+    await ws.createSkill({ name: 'mine', description: 'Mine', scope: 'global' })
+  })
+  afterEach(async () => { await fs.rm(tmp, { recursive: true, force: true }) })
+
+  const byName = async (name: string) => (await ws.getSnapshot()).skills.find((s) => s.name === name)!
+
+  it('sets, replaces and clears tags on one skill without touching the rest of the ledger', async () => {
+    const tdd = await byName('tdd')
+    let snap = await ws.setSkillTags(tdd.id, ['Work', 'testing'])
+    expect(snap.skills.find((s) => s.name === 'tdd')?.library).toMatchObject({ repo: SLUG, ref: SHA1, tags: ['testing', 'work'] })
+    snap = await ws.setSkillTags(tdd.id, ['work'])
+    expect(snap.skills.find((s) => s.name === 'tdd')?.library?.tags).toEqual(['work'])
+    snap = await ws.setSkillTags(tdd.id, [])
+    expect(snap.skills.find((s) => s.name === 'tdd')?.library?.tags).toBeUndefined()
+    // Still pinned; nothing else changed.
+    expect(snap.skills.find((s) => s.name === 'tdd')?.library).toMatchObject({ repo: SLUG, ref: SHA1 })
+  })
+
+  it('tags an unpinned original (creating its ledger entry) and persists through a store reload', async () => {
+    const mine = await byName('mine')
+    await ws.setSkillTags(mine.id, ['mine'])
+    const raw = JSON.parse(await fs.readFile(path.join(tmp, 'library.json'), 'utf8')).skills
+    expect(raw.mine).toMatchObject({ repo: '', tags: ['mine'] })
+    const reloaded = await createLibraryStore(path.join(tmp, 'library.json')).load()
+    expect(reloaded.mine.tags).toEqual(['mine'])
+  })
+
+  it('bulk adds and removes across many skills, skipping non-library ids', async () => {
+    const ids = [(await byName('tdd')).id, (await byName('other')).id, (await byName('mine')).id]
+    const added = await ws.tagSkills([...ids, 'nope:missing'], { add: ['DMA', 'work'] })
+    expect(added.tagged).toBe(3)
+    expect(added.skipped).toEqual(['nope:missing'])
+    for (const name of ['tdd', 'other', 'mine'])
+      expect(added.workspace.skills.find((s) => s.name === name)?.library?.tags).toEqual(['dma', 'work'])
+
+    const removed = await ws.tagSkills(ids.slice(0, 2), { remove: ['work'] })
+    expect(removed.workspace.skills.find((s) => s.name === 'tdd')?.library?.tags).toEqual(['dma'])
+    expect(removed.workspace.skills.find((s) => s.name === 'mine')?.library?.tags).toEqual(['dma', 'work'])
+    await expect(ws.tagSkills(ids, {})).rejects.toThrow('Nothing to change')
+  })
+
+  it('tags survive linking the skill to a repo origin', async () => {
+    const other = await byName('other')
+    await ws.setSkillTags(other.id, ['keep-me'])
+    const snap = await ws.linkOrigin(other.id, { repo: SLUG, path: 'skills/other', ref: SHA1 })
+    expect(snap.skills.find((s) => s.name === 'other')?.library).toMatchObject({ repo: SLUG, tags: ['keep-me'] })
   })
 })

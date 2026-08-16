@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, ArrowUpCircle, Link2, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { AlertCircle, ArrowUpCircle, CheckSquare, Link2, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import { MachineDialog } from '@/features/machines/ui/machine-dialog'
 import { LogsView } from '@/features/logs/ui/logs-view'
 import { GettingStarted } from '@/features/onboarding/ui/getting-started'
@@ -11,10 +11,11 @@ import { InstallSkillDialog, type InstallTarget } from '@/features/repos/ui/inst
 import { RepoBrowser } from '@/features/repos/ui/repo-browser'
 import { SettingsDialog } from '@/features/settings/ui/settings-dialog'
 import { searchSkills } from '@/features/skills/model/search'
-import { CATEGORY_LABELS, CATEGORY_ORDER, type RepoSkill, type Skill, type SkillCategory } from '@/features/skills/model/skills'
+import { CATEGORY_LABELS, CATEGORY_ORDER, originKindOf, type OriginKind, type RepoSkill, type Skill, type SkillCategory } from '@/features/skills/model/skills'
 import { useWorkspace } from '@/features/skills/model/use-workspace'
 import { AddSkillDialog } from '@/features/skills/ui/add-skill-dialog'
 import { ProjectGroups } from '@/features/skills/ui/project-groups'
+import { BulkTagBar } from '@/features/skills/ui/bulk-tag-bar'
 import { SkillCard } from '@/features/skills/ui/skill-card'
 import { SkillDetail } from '@/features/skills/ui/skill-detail'
 
@@ -106,6 +107,8 @@ export function Dashboard() {
     linkOrigins,
     categorizeLibrary,
     setSkillCategory,
+    setSkillTags,
+    tagSkills,
     getLogs,
   } = useWorkspace()
   const [filter, setFilter] = useState<FilterKey>('all')
@@ -118,6 +121,12 @@ export function Dashboard() {
   const [installTarget, setInstallTarget] = useState<RepoSkill | null>(null)
   const [activeMachine, setActiveMachine] = useState<string | null>(null)
   const [category, setCategory] = useState<SkillCategory | 'uncategorized' | null>(null)
+  const [originFilter, setOriginFilter] = useState<OriginKind | null>(null)
+  // Active tag filters — a skill must carry every one (AND).
+  const [tagFilter, setTagFilter] = useState<string[]>([])
+  // Select mode for bulk tagging; ids of the chosen library skills.
+  const [selecting, setSelecting] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [showLogs, setShowLogs] = useState(false)
   const [showUpdates, setShowUpdates] = useState(false)
   const [updateCount, setUpdateCount] = useState<number | null>(null)
@@ -218,11 +227,48 @@ export function Dashboard() {
   // Category chips narrow the current tab; only library (global) skills carry
   // categories, so 'uncategorized' means a global skill with none yet.
   const visibleSkills = useMemo(() => {
-    if (category === null) return scopedSkills
+    let result = scopedSkills
     if (category === 'uncategorized')
-      return scopedSkills.filter((skill) => skill.scope === 'global' && !skill.library?.category)
-    return scopedSkills.filter((skill) => skill.library?.category === category)
-  }, [scopedSkills, category])
+      result = result.filter((skill) => skill.scope === 'global' && !skill.library?.category)
+    else if (category !== null) result = result.filter((skill) => skill.library?.category === category)
+    if (originFilter) result = result.filter((skill) => skill.scope === 'global' && originKindOf(skill) === originFilter)
+    if (tagFilter.length)
+      result = result.filter((skill) => tagFilter.every((tag) => skill.library?.tags?.includes(tag)))
+    return result
+  }, [scopedSkills, category, originFilter, tagFilter])
+
+  // Origin split and tag vocabulary over the library (global) skills in scope.
+  const originCounts = useMemo(() => {
+    const counts: Record<OriginKind, number> = { repo: 0, original: 0 }
+    for (const skill of scopedSkills) if (skill.scope === 'global') counts[originKindOf(skill)] += 1
+    return counts
+  }, [scopedSkills])
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const skill of scopedSkills)
+      for (const tag of skill.library?.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1)
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [scopedSkills])
+  const allTags = useMemo(() => {
+    const set = new Set<string>()
+    for (const skill of skills) for (const tag of skill.library?.tags ?? []) set.add(tag)
+    return [...set].sort()
+  }, [skills])
+
+  const toggleTagFilter = (tag: string) =>
+    setTagFilter((current) => (current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag]))
+  const selectableVisible = useMemo(() => visibleSkills.filter((skill) => skill.scope === 'global'), [visibleSkills])
+  const toggleSelected = (id: string) =>
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const exitSelectMode = () => {
+    setSelecting(false)
+    setSelectedIds(new Set())
+  }
 
   const categoryCounts = useMemo(() => {
     const counts = new Map<SkillCategory | 'uncategorized', number>()
@@ -402,6 +448,10 @@ export function Dashboard() {
             onSetCategory={async (value) => {
               await setSkillCategory(selected.id, value)
             }}
+            allTags={allTags}
+            onSetTags={async (tags) => {
+              await setSkillTags(selected.id, tags)
+            }}
             findOrigin={findOrigin}
             onLinkOrigin={async (origin) => {
               await linkOrigin(selected.id, origin)
@@ -522,10 +572,67 @@ export function Dashboard() {
                   </button>
                 </div>
               )}
+
+              {(originCounts.repo + originCounts.original > 0) && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <CategoryChip
+                    label="From repos"
+                    count={originCounts.repo}
+                    active={originFilter === 'repo'}
+                    onClick={() => setOriginFilter(originFilter === 'repo' ? null : 'repo')}
+                  />
+                  <CategoryChip
+                    label="Originals"
+                    count={originCounts.original}
+                    active={originFilter === 'original'}
+                    onClick={() => setOriginFilter(originFilter === 'original' ? null : 'original')}
+                  />
+                  {tagCounts.length > 0 && <div className="mx-1 h-5 w-px bg-[#27272a]" />}
+                  {tagCounts.map(([tag, count]) => (
+                    <CategoryChip
+                      key={tag}
+                      label={`#${tag}`}
+                      count={count}
+                      active={tagFilter.includes(tag)}
+                      onClick={() => toggleTagFilter(tag)}
+                    />
+                  ))}
+                  {tagFilter.length > 0 && (
+                    <button type="button" onClick={() => setTagFilter([])} className="text-[12px] text-[#71717a] hover:text-[#e4e4e7]">
+                      clear tags
+                    </button>
+                  )}
+                  <div className="flex-1" />
+                  {!selecting && (
+                    <button
+                      type="button"
+                      onClick={() => setSelecting(true)}
+                      title="Select several library skills to tag them at once"
+                      className="flex h-7 items-center gap-1.5 rounded-[8px] border border-[#27272a] bg-[#18181b] px-2.5 text-[12px] font-medium text-[#e4e4e7] transition hover:border-[#3a3a42]"
+                    >
+                      <CheckSquare className="size-3.5 text-[#a1a1aa]" />
+                      Select
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-7 pt-5">
-              {!onboardingDismissed && filter === 'all' && !searching && (
+              {selecting && (
+                <BulkTagBar
+                  selectedCount={selectedIds.size}
+                  visibleCount={selectableVisible.length}
+                  suggestions={allTags}
+                  onSelectAll={() => setSelectedIds(new Set(selectableVisible.map((skill) => skill.id)))}
+                  onClearSelection={() => setSelectedIds(new Set())}
+                  onApply={async (change) => {
+                    await tagSkills([...selectedIds], change)
+                  }}
+                  onDone={exitSelectMode}
+                />
+              )}
+              {!onboardingDismissed && filter === 'all' && !searching && !selecting && (
                 <GettingStarted
                   skills={skills}
                   repos={repoCatalogs}
@@ -575,6 +682,9 @@ export function Dashboard() {
                       onOpen={() => setSelectedId(skill.id)}
                       onToggle={() => void toggleSkill(skill)}
                       onToggleFavourite={() => favourite(skill)}
+                      selectable={selecting}
+                      selected={selecting && skill.scope === 'global' ? selectedIds.has(skill.id) : undefined}
+                      onSelect={() => toggleSelected(skill.id)}
                     />
                   ))}
                 </div>

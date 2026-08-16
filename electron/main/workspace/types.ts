@@ -63,6 +63,18 @@ export type LibrarySkillMeta = {
   /** Where the category came from — 'manual' is never overwritten by re-runs. */
   categorySource?: 'llm' | 'structural' | 'manual'
   categoryConfidence?: number
+  /**
+   * Free-form user tags, normalized (lowercase, hyphenated). Orthogonal to
+   * category: a skill has one shelf but any number of tags. Ledger-only —
+   * never written into SKILL.md, so tagging an imported skill does not make
+   * it "modified" for updates or origin matching.
+   */
+  tags?: string[]
+}
+
+export type TagChange = {
+  add?: string[]
+  remove?: string[]
 }
 
 /** One machine's library compared against the hub library, by folder name. */

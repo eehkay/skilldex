@@ -17,6 +17,8 @@ import {
   type SetSkillEnabledInput,
   type SetSyndicationInput,
   type SkillCategory,
+  type TagChange,
+  type TagSkillsResult,
   type Skill,
   type SkillFile,
   type WorkspaceConfig,
@@ -69,6 +71,8 @@ export type WorkspaceState = {
   categorizeLibrary: (options?: { force?: boolean }) => Promise<{ categorized: number; uncategorized: number; usedLlm: boolean } | null>
   getLogs: (limit?: number) => Promise<LogEntry[]>
   setSkillCategory: (id: string, category: SkillCategory | null) => Promise<WorkspaceSnapshot | null>
+  setSkillTags: (id: string, tags: string[]) => Promise<WorkspaceSnapshot | null>
+  tagSkills: (skillIds: string[], change: TagChange) => Promise<Omit<TagSkillsResult, 'workspace'> | null>
 }
 
 // Electron injects window.skilldex via preload; served by the hub instead,
@@ -386,6 +390,26 @@ export function useWorkspace(): WorkspaceState {
     (id: string, category: SkillCategory | null) => mutate((w) => w.setSkillCategory(id, category)),
     [mutate],
   )
+  const setSkillTags = useCallback(
+    (id: string, tags: string[]) => mutate((w) => w.setSkillTags(id, tags)),
+    [mutate],
+  )
+  const tagSkills = useCallback(async (skillIds: string[], change: TagChange) => {
+    setLoading(true)
+    try {
+      const result = await bridge()?.tagSkills(skillIds, change)
+      if (!result) return null
+      setSnapshot(result.workspace)
+      setError(null)
+      return { tagged: result.tagged, skipped: result.skipped }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      throw new Error(message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   const setSyndication = useCallback(async (input: SetSyndicationInput) => {
     setMachinesLoading(true)
@@ -463,6 +487,8 @@ export function useWorkspace(): WorkspaceState {
     linkOrigins,
     categorizeLibrary,
     setSkillCategory,
+    setSkillTags,
+    tagSkills,
     getLogs,
   }
 }

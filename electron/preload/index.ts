@@ -86,6 +86,10 @@ contextBridge.exposeInMainWorld('skilldex', {
     linkOrigins: (): Promise<unknown> => ipcRenderer.invoke('skilldex:link-origins'),
     categorizeLibrary: (options?: { force?: boolean }): Promise<CategorizeResult> =>
       ipcRenderer.invoke('skilldex:categorize-library', options),
+    setSkillTags: (id: string, tags: string[]): Promise<WorkspaceSnapshot> =>
+      ipcRenderer.invoke('skilldex:set-skill-tags', id, tags),
+    tagSkills: (skillIds: string[], change: { add?: string[]; remove?: string[] }): Promise<unknown> =>
+      ipcRenderer.invoke('skilldex:tag-skills', skillIds, change),
     setSkillCategory: (id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot> =>
       ipcRenderer.invoke('skilldex:set-skill-category', id, category),
   },

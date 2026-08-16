@@ -96,6 +96,9 @@ function normalize(value: unknown): Record<string, LibrarySkillMeta> {
       ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
       ...(typeof entry.categorySource === 'string' ? { categorySource: entry.categorySource } : {}),
       ...(typeof entry.categoryConfidence === 'number' ? { categoryConfidence: entry.categoryConfidence } : {}),
+      ...(Array.isArray(entry.tags) && entry.tags.some((t) => typeof t === 'string')
+        ? { tags: entry.tags.filter((t): t is string => typeof t === 'string') }
+        : {}),
       targets: Array.isArray(entry.targets)
         ? entry.targets.filter(
             (target): target is SyndicationTarget =>

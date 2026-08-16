@@ -57,6 +57,19 @@ export type LibrarySkillMeta = {
   category?: SkillCategory
   categorySource?: 'llm' | 'structural' | 'manual'
   categoryConfidence?: number
+  tags?: string[]
+}
+
+export type TagChange = { add?: string[]; remove?: string[] }
+export type TagSkillsResult = { workspace: WorkspaceSnapshot; tagged: number; skipped: string[] }
+
+/**
+ * Where a library skill stands with respect to upstream: pinned to a repo
+ * (updatable) or an original with no known source (yours, or unattributed).
+ */
+export type OriginKind = 'repo' | 'original'
+export function originKindOf(skill: Pick<Skill, 'library'>): OriginKind {
+  return skill.library?.repo ? 'repo' : 'original'
 }
 
 export type CategorizeResult = {

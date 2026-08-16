@@ -120,6 +120,16 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
         throw new Error(`Unknown category "${String(category)}". One of: ${CATEGORY_IDS.join(', ')}.`)
       return workspace.setSkillCategory(id, category as SkillCategory | null)
     }],
+    ['POST /api/set-skill-tags', async (_q, body) => {
+      const id = typeof body.id === 'string' ? body.id : ''
+      if (!id || !Array.isArray(body.tags)) throw new Error('Missing skill id or tags.')
+      return workspace.setSkillTags(id, (body.tags as unknown[]).filter((t): t is string => typeof t === 'string'))
+    }],
+    ['POST /api/tag-skills', async (_q, body) => {
+      if (!Array.isArray(body.skillIds)) throw new Error('Missing skillIds.')
+      const strings = (value: unknown) => (Array.isArray(value) ? value.filter((t): t is string => typeof t === 'string') : [])
+      return workspace.tagSkills(body.skillIds as string[], { add: strings(body.add), remove: strings(body.remove) })
+    }],
     ['GET /api/updates', async () => workspace.checkUpdates()],
     ['POST /api/apply-updates', async (_q, body) =>
       workspace.applyUpdates(Array.isArray(body.skillIds) ? (body.skillIds as string[]) : undefined)],

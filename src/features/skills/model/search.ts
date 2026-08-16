@@ -20,6 +20,7 @@ export function searchSkills(skills: Skill[], query: string): Skill[] {
       skill.sourceKind,
       skill.origin?.label ?? '',
       skill.library?.repo ?? '',
+      ...(skill.library?.tags ?? []),
       ...skill.projects,
     ]
       .join(' ')

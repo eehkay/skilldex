@@ -36,6 +36,8 @@ import type {
   SkillCategory,
   SkillFile,
   SyndicationResult,
+  TagChange,
+  TagSkillsResult,
   WorkspaceConfig,
   WorkspaceSnapshot,
 } from './skills'
@@ -118,6 +120,9 @@ export function createHttpBridge(): WorkspaceBridge {
       call<CategorizeResult>('POST', 'categorize-library', { force: options?.force ?? false }),
     setSkillCategory: (id: string, category: SkillCategory | null) =>
       call<WorkspaceSnapshot>('POST', 'set-skill-category', { id, category }),
+    setSkillTags: (id: string, tags: string[]) => call<WorkspaceSnapshot>('POST', 'set-skill-tags', { id, tags }),
+    tagSkills: (skillIds: string[], change: TagChange) =>
+      call<TagSkillsResult>('POST', 'tag-skills', { skillIds, add: change.add ?? [], remove: change.remove ?? [] }),
     setSyndication: (input: SetSyndicationInput) =>
       call<SyndicationResult>('POST', 'set-syndication', { input }),
   }
