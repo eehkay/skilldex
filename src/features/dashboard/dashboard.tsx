@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react'
-import { AlertCircle, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertCircle, ArrowUpCircle, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import { MachineDialog } from '@/features/machines/ui/machine-dialog'
 import { LogsView } from '@/features/logs/ui/logs-view'
+import { GettingStarted } from '@/features/onboarding/ui/getting-started'
+import { UpdatesPanel } from '@/features/updates/ui/updates-panel'
 import { MachineView } from '@/features/machines/ui/machine-view'
 import { Sidebar, type FilterKey, type SidebarCounts } from '@/features/navigation/ui/sidebar'
 import { AddRepoDialog } from '@/features/repos/ui/add-repo-dialog'
@@ -97,6 +99,10 @@ export function Dashboard() {
     adoptFromMachine,
     convergeMachine,
     clearMachine,
+    checkUpdates,
+    applyUpdates,
+    findOrigin,
+    linkOrigin,
     categorizeLibrary,
     setSkillCategory,
     getLogs,
@@ -112,6 +118,27 @@ export function Dashboard() {
   const [activeMachine, setActiveMachine] = useState<string | null>(null)
   const [category, setCategory] = useState<SkillCategory | 'uncategorized' | null>(null)
   const [showLogs, setShowLogs] = useState(false)
+  const [showUpdates, setShowUpdates] = useState(false)
+  const [updateCount, setUpdateCount] = useState<number | null>(null)
+  const [onboardingDismissed, setOnboardingDismissed] = useState(
+    () => typeof window !== 'undefined' && window.localStorage.getItem('skillsync.onboarding.dismissed') === '1',
+  )
+  const dismissOnboarding = () => {
+    window.localStorage.setItem('skillsync.onboarding.dismissed', '1')
+    setOnboardingDismissed(true)
+  }
+
+  // A light background check on load so the Updates button can show a badge
+  // without the user having to open it. Errors are silent here — the panel
+  // itself surfaces them when opened.
+  useEffect(() => {
+    let cancelled = false
+    void checkUpdates()
+      .then((result) => { if (!cancelled && result) setUpdateCount(result.updates.length) })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [categorizing, setCategorizing] = useState(false)
   const [categorizeNote, setCategorizeNote] = useState<string | null>(null)
   // null = closed, 'add' = new machine, otherwise the name of the machine being edited.
@@ -348,6 +375,10 @@ export function Dashboard() {
             onSetCategory={async (value) => {
               await setSkillCategory(selected.id, value)
             }}
+            findOrigin={findOrigin}
+            onLinkOrigin={async (origin) => {
+              await linkOrigin(selected.id, origin)
+            }}
             onBack={() => setSelectedId(null)}
           />
         ) : (
@@ -363,6 +394,18 @@ export function Dashboard() {
                   </div>
                   <p className="mt-1.5 max-w-[560px] text-[13.5px] leading-relaxed text-[#71717a]">{heading.subtitle}</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowUpdates(true)}
+                  title="Check tracked repos for newer versions of pinned skills"
+                  className="relative flex h-[38px] items-center gap-1.5 rounded-[9px] border border-[#27272a] bg-[#18181b] px-3.5 text-[13px] font-medium text-[#e4e4e7] transition hover:border-[#3a3a42]"
+                >
+                  <ArrowUpCircle className="size-[15px]" />
+                  Updates
+                  {updateCount !== null && updateCount > 0 && (
+                    <span className="ml-0.5 rounded-full bg-[#f97316] px-1.5 py-0.5 font-mono text-[10.5px] font-semibold leading-none text-white">{updateCount}</span>
+                  )}
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowCreate(true)}
@@ -442,6 +485,19 @@ export function Dashboard() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-7 pt-5">
+              {!onboardingDismissed && filter === 'all' && !searching && (
+                <GettingStarted
+                  skills={skills}
+                  repos={repoCatalogs}
+                  machines={machineSnapshots}
+                  onAddRepo={() => setShowAddRepo(true)}
+                  onOpenRepo={(slug) => { setActiveRepo(slug); setSelectedId(null); setActiveMachine(null); setShowLogs(false) }}
+                  onAddMachine={() => setMachineDialog('add')}
+                  onOpenMachine={(name) => { setActiveMachine(name); setSelectedId(null); setActiveRepo(null); setShowLogs(false) }}
+                  onCategorize={() => void runCategorize(false)}
+                  onDismiss={dismissOnboarding}
+                />
+              )}
               {error ? (
                 <div className="flex items-center gap-2 rounded-xl border border-[#3f2020] bg-[#1a0f0f] px-4 py-3 text-[13px] text-[#f87171]">
                   <AlertCircle className="size-4" />
@@ -508,6 +564,17 @@ export function Dashboard() {
         onClose={() => setShowSettings(false)}
         onConfigure={configure}
         onPickDirectory={pickDirectory}
+      />
+
+      <UpdatesPanel
+        open={showUpdates}
+        onClose={() => setShowUpdates(false)}
+        checkUpdates={async () => {
+          const result = await checkUpdates()
+          if (result) setUpdateCount(result.updates.length)
+          return result
+        }}
+        applyUpdates={applyUpdates}
       />
 
       <AddRepoDialog

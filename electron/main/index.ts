@@ -129,6 +129,12 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:clear-machine', (_event, name: string, dirNames?: string[]) =>
     workspace.clearMachine(name, dirNames),
   )
+  ipcMain.handle('skilldex:check-updates', () => workspace.checkUpdates())
+  ipcMain.handle('skilldex:apply-updates', (_event, skillIds?: string[]) => workspace.applyUpdates(skillIds))
+  ipcMain.handle('skilldex:find-origin', (_event, id: string) => workspace.findOrigin(id))
+  ipcMain.handle('skilldex:link-origin', (_event, id: string, origin: { repo: string; path: string; ref: string }) =>
+    workspace.linkOrigin(id, origin),
+  )
   ipcMain.handle('skilldex:categorize-library', (_event, options?: { force?: boolean }) =>
     workspace.categorizeLibrary(options),
   )

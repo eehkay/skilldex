@@ -15,6 +15,9 @@
 
 import type {
   AdoptResult,
+  ApplyUpdatesResult,
+  CheckUpdatesResult,
+  OriginCandidate,
   CategorizeResult,
   ClearResult,
   ConvergeResult,
@@ -104,6 +107,11 @@ export function createHttpBridge(): WorkspaceBridge {
       call<ConvergeResult>('POST', 'converge-machine', { name, dirNames }),
     clearMachine: (name: string, dirNames?: string[]) =>
       call<ClearResult>('POST', 'clear-machine', { name, dirNames }),
+    checkUpdates: () => call<CheckUpdatesResult>('GET', 'updates'),
+    applyUpdates: (skillIds?: string[]) => call<ApplyUpdatesResult>('POST', 'apply-updates', { skillIds }),
+    findOrigin: (id: string) => call<OriginCandidate[]>('GET', `find-origin?id=${encodeURIComponent(id)}`),
+    linkOrigin: (id: string, origin: { repo: string; path: string; ref: string }) =>
+      call<WorkspaceSnapshot>('POST', 'link-origin', { id, origin }),
     categorizeLibrary: (options?: { force?: boolean }) =>
       call<CategorizeResult>('POST', 'categorize-library', { force: options?.force ?? false }),
     setSkillCategory: (id: string, category: SkillCategory | null) =>

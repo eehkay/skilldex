@@ -2,6 +2,9 @@ export {}
 
 import type {
   AdoptResult,
+  ApplyUpdatesResult,
+  CheckUpdatesResult,
+  OriginCandidate,
   CategorizeResult,
   ClearResult,
   ConvergeResult,
@@ -59,6 +62,10 @@ declare global {
         adoptFromMachine(name: string, skillIds: string[]): Promise<AdoptResult>
         convergeMachine(name: string, dirNames?: string[]): Promise<ConvergeResult>
         clearMachine(name: string, dirNames?: string[]): Promise<ClearResult>
+        checkUpdates(): Promise<CheckUpdatesResult>
+        applyUpdates(skillIds?: string[]): Promise<ApplyUpdatesResult>
+        findOrigin(id: string): Promise<OriginCandidate[]>
+        linkOrigin(id: string, origin: { repo: string; path: string; ref: string }): Promise<WorkspaceSnapshot>
         categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
         setSkillCategory(id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
       }

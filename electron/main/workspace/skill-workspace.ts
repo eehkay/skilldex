@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { syncAgentLinks } from './agent-links'
 import { logger } from './log'
+import { findOriginCandidates, type OriginCandidate } from './origin-finder'
 import { categorizeSkills, createClassifierFromConfig, type ClassifierClient } from './categorizer'
 import type { ConfigStore } from './config'
 import { createMemoryLibraryStore, type LibraryStore } from './library-store'
@@ -25,6 +26,7 @@ import {
   scanProjectSkills,
 } from './filesystem-source'
 import {
+  changedFilesBetween,
   downloadRepoSkill,
   fetchRepoCatalog,
   parseRepoInput,
@@ -52,6 +54,8 @@ import {
   type ArchiveEntry,
 } from './skill-archive'
 import type {
+  ApplyUpdatesResult,
+  CheckUpdatesResult,
   CreateSkillInput,
   DistributeSkillInput,
   DistributeSkillResult,
@@ -67,6 +71,7 @@ import type {
   RepoCatalog,
   SkillCategory,
   SkillFile,
+  SkillUpdate,
   SkillRecord,
   SourceRecord,
   SyndicationTarget,
@@ -218,6 +223,28 @@ export type SkillWorkspace = {
   adoptFromMachine(name: string, skillIds: string[]): Promise<AdoptResult>
   /** Install every library skill (or the given folder names) missing from a machine. */
   convergeMachine(name: string, dirNames?: string[]): Promise<ConvergeResult>
+  /**
+   * Compare every repo-pinned library skill against its repo's current
+   * commit (fresh scan) and report the ones whose folder actually changed.
+   */
+  checkUpdates(): Promise<CheckUpdatesResult>
+  /**
+   * Update the given library skills (all available when omitted): re-download
+   * at the repo's current commit, swap the library copy atomically, re-pin,
+   * and re-push to every syndicated machine. Local edits are overwritten —
+   * the UI warns when a skill has been modified since import.
+   */
+  applyUpdates(skillIds?: string[]): Promise<ApplyUpdatesResult>
+  /**
+   * Suggest where an orphaned library skill (no repo pin) came from, ranked
+   * by confidence. Only searches repos the user has added.
+   */
+  findOrigin(skillId: string): Promise<OriginCandidate[]>
+  /**
+   * Link a library skill to a repo origin, pinning it there so it becomes
+   * updatable. Files are left as they are; only the ledger changes.
+   */
+  linkOrigin(skillId: string, origin: { repo: string; path: string; ref: string }): Promise<WorkspaceSnapshot>
   /**
    * Uninstall library-managed skills from a machine (all of them, or the
    * given folder names) so they can be brought back selectively. Skills the
@@ -1138,6 +1165,157 @@ export function createSkillWorkspace({
 
       const machineState = await machines().snapshot(machine)
       return { workspace: await buildSnapshot(config), machine: machineState, installed, failed }
+    },
+
+    async checkUpdates() {
+      const config = await configStore.load()
+      const local = await buildSnapshot(config)
+      const ledger = await libraryStore.load()
+      const errors: Record<string, string> = {}
+      const updates: SkillUpdate[] = []
+
+      // Fresh scans so we compare against the repos' *current* commits.
+      const scans = new Map<string, RepoScan>()
+      for (const slug of config.skillRepos) {
+        try {
+          scans.set(slug, await scanRepo(slug, true))
+        } catch (cause) {
+          errors[slug] = cause instanceof Error ? cause.message : String(cause)
+        }
+      }
+
+      const pinned = local.skills.filter((skill) => {
+        if (skill.sourceKind !== 'Personal') return false
+        const meta = ledger[dirNameOf(skill)]
+        return Boolean(meta?.repo && meta.ref)
+      })
+
+      for (const skill of pinned) {
+        const dirName = dirNameOf(skill)
+        const meta = ledger[dirName]!
+        const scan = scans.get(meta.repo)
+        if (!scan) continue
+        const toRef = scan.catalog.commitSha ?? scan.catalog.ref
+        if (toRef === meta.ref) continue
+        // The repo moved — but did this skill's folder?
+        try {
+          const changed = await changedFilesBetween(meta.repo, meta.path, meta.ref, toRef, fetchImpl)
+          if (changed.length === 0) continue
+          updates.push({
+            skillId: skill.id, dirName, repo: meta.repo, path: meta.path,
+            fromRef: meta.ref, toRef, changedFiles: changed, targets: meta.targets.length,
+          })
+        } catch (cause) {
+          errors[`${meta.repo}:${dirName}`] = cause instanceof Error ? cause.message : String(cause)
+        }
+      }
+      logger.info('updates.check', { checked: pinned.length, available: updates.length, errors: Object.keys(errors).length })
+      return { updates, checked: pinned.length, errors }
+    },
+
+    async applyUpdates(skillIds) {
+      const config = await configStore.load()
+      const check = await this.checkUpdates()
+      const wanted = skillIds ? new Set(skillIds) : null
+      const updated: string[] = []
+      const failed: Record<string, string> = {}
+      const repushed: ApplyUpdatesResult['repushed'] = {}
+
+      for (const update of check.updates) {
+        if (wanted && !wanted.has(update.skillId)) continue
+        const skill = await resolveKnown(update.skillId)
+        if (!skill) { failed[update.dirName] = 'Skill vanished before update.'; continue }
+        const scan = await scanRepo(update.repo)
+        const catalogSkill = scan.catalog.skills.find((entry) => entry.path === update.path)
+        const files = catalogSkill && scan.filesBySkill.get(catalogSkill.id)
+        if (!catalogSkill || !files) { failed[update.dirName] = 'Skill no longer in the repo at its new commit.'; continue }
+
+        // Download beside the current copy, then swap — a failed download
+        // never leaves the library without the skill.
+        const root = path.dirname(skill.realPath)
+        const staging = path.join(root, `.${update.dirName}.updating`)
+        const backup = path.join(root, `.${update.dirName}.previous`)
+        try {
+          await fs.rm(staging, { recursive: true, force: true })
+          await downloadRepoSkill({ slug: update.repo, ref: update.toRef, dir: update.path, files, dest: staging, fetchImpl })
+          await fs.rm(backup, { recursive: true, force: true })
+          await fs.rename(skill.realPath, backup)
+          await fs.rename(staging, skill.realPath)
+          await fs.rm(backup, { recursive: true, force: true })
+        } catch (cause) {
+          await fs.rm(staging, { recursive: true, force: true }).catch(() => {})
+          // Restore if we got as far as moving the original.
+          const restored = await fs.access(backup).then(() => true).catch(() => false)
+          if (restored) await fs.rename(backup, skill.realPath).catch(() => {})
+          failed[update.dirName] = cause instanceof Error ? cause.message : String(cause)
+          logger.warn('updates.apply.failed', { skill: update.dirName, error: failed[update.dirName] })
+          continue
+        }
+
+        const meta = (await libraryStore.load())[update.dirName]!
+        await libraryStore.set(update.dirName, { ...meta, ref: update.toRef })
+        updated.push(update.dirName)
+        logger.info('updates.applied', { skill: update.dirName, from: update.fromRef.slice(0, 7), to: update.toRef.slice(0, 7), files: update.changedFiles.length })
+
+        // Re-push to syndicated machines at the new pin: uninstall then install
+        // so the machine ends up with exactly the new files.
+        const outcome = { ok: [] as string[], failed: {} as Record<string, string> }
+        for (const target of meta.targets) {
+          const machine = config.machines.find((entry) => entry.name === target.machine)
+          if (!machine) continue
+          try {
+            await machines().uninstall(machine, { dirName: update.dirName, scope: target.scope, projectName: target.projectName }).catch(() => {})
+            await machines().install(machine, {
+              repo: update.repo, skillId: `${update.repo}:${update.path}`,
+              scope: target.scope, projectName: target.projectName, ref: update.toRef,
+            })
+            outcome.ok.push(target.machine)
+          } catch (cause) {
+            outcome.failed[target.machine] = cause instanceof Error ? cause.message : String(cause)
+            logger.warn('updates.repush.failed', { skill: update.dirName, machine: target.machine, error: outcome.failed[target.machine] })
+          }
+        }
+        if (meta.targets.length) repushed[update.dirName] = outcome
+      }
+
+      logger.info('updates.apply.done', { updated: updated.length, failed: Object.keys(failed).length })
+      return { workspace: await buildSnapshot(config), updated, failed, repushed }
+    },
+
+    async findOrigin(skillId) {
+      const skill = await resolveKnown(skillId)
+      if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
+      const config = await configStore.load()
+      const scans: RepoScan[] = []
+      for (const slug of config.skillRepos) {
+        try {
+          scans.push(await scanRepo(slug))
+        } catch (cause) {
+          logger.warn('origin.scanFailed', { repo: slug, error: cause instanceof Error ? cause.message : String(cause) })
+        }
+      }
+      const candidates = await findOriginCandidates(skill.realPath, scans, fetchImpl)
+      logger.info('origin.search', { skill: dirNameOf(skill), candidates: candidates.map((c) => `${c.repo}:${c.confidence}`) })
+      return candidates
+    },
+
+    async linkOrigin(skillId, origin) {
+      const skill = await resolveKnown(skillId)
+      if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
+      const config = await configStore.load()
+      if (!config.skillRepos.includes(origin.repo)) throw new Error('Unknown skill repo.')
+      const dirName = dirNameOf(skill)
+      const existing = (await libraryStore.load())[dirName]
+      await libraryStore.set(dirName, {
+        repo: origin.repo,
+        path: origin.path,
+        ref: origin.ref,
+        targets: existing?.targets ?? [],
+        ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
+        ...(existing?.category ? { category: existing.category, categorySource: existing.categorySource, categoryConfidence: existing.categoryConfidence } : {}),
+      })
+      logger.info('origin.linked', { skill: dirName, repo: origin.repo, ref: origin.ref })
+      return buildSnapshot(config)
     },
 
     async clearMachine(name, dirNames) {

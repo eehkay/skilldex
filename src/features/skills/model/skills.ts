@@ -237,6 +237,39 @@ export type ConvergeResult = {
   failed: Record<string, string>
 }
 
+export type SkillUpdate = {
+  skillId: string
+  dirName: string
+  repo: string
+  path: string
+  fromRef: string
+  toRef: string
+  changedFiles: string[]
+  targets: number
+}
+
+export type CheckUpdatesResult = {
+  updates: SkillUpdate[]
+  checked: number
+  errors: Record<string, string>
+}
+
+export type ApplyUpdatesResult = {
+  workspace: WorkspaceSnapshot
+  updated: string[]
+  failed: Record<string, string>
+  repushed: Record<string, { ok: string[]; failed: Record<string, string> }>
+}
+
+export type OriginCandidate = {
+  repo: string
+  path: string
+  ref: string
+  webUrl: string
+  confidence: 'exact' | 'likely' | 'name-only'
+  reason: string
+}
+
 export type ClearResult = {
   workspace: WorkspaceSnapshot
   machine: MachineSnapshot

@@ -296,6 +296,41 @@ export type RepoCatalog = {
   error?: string
 }
 
+/** An available upstream update for a repo-pinned library skill. */
+export type SkillUpdate = {
+  /** Library skill id (canonical path). */
+  skillId: string
+  /** Folder name in the library. */
+  dirName: string
+  repo: string
+  /** Directory within the repo. */
+  path: string
+  /** Pinned commit the library copy is at. */
+  fromRef: string
+  /** Current commit in the repo. */
+  toRef: string
+  /** Files in the skill folder that differ between the two commits. */
+  changedFiles: string[]
+  /** Machines this skill is syndicated to (they'll be re-pushed on update). */
+  targets: number
+}
+
+export type CheckUpdatesResult = {
+  updates: SkillUpdate[]
+  /** Repo-pinned skills that were checked. */
+  checked: number
+  /** Repos that could not be scanned (name → message). */
+  errors: Record<string, string>
+}
+
+export type ApplyUpdatesResult = {
+  workspace: WorkspaceSnapshot
+  updated: string[]
+  failed: Record<string, string>
+  /** Per-skill machine re-push outcomes. */
+  repushed: Record<string, { ok: string[]; failed: Record<string, string> }>
+}
+
 export type InstallRepoSkillInput = {
   /** `owner/repo` slug of a configured skill repo. */
   repo: string

@@ -285,3 +285,27 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return results
 }
 
+/**
+ * Which files under `dir` differ between two commits, using GitHub's compare
+ * endpoint (one call, no tree walks). Returns [] when nothing under the
+ * folder changed even if the repo as a whole moved. Throws on API errors.
+ */
+export async function changedFilesBetween(
+  slug: string,
+  dir: string,
+  fromRef: string,
+  toRef: string,
+  fetchImpl: FetchLike,
+): Promise<string[]> {
+  if (fromRef === toRef) return []
+  const data = (await apiGet(
+    `${API}/repos/${slug}/compare/${encodeURIComponent(fromRef)}...${encodeURIComponent(toRef)}`,
+    slug,
+    fetchImpl,
+  )) as { files?: Array<{ filename: string }> }
+  const prefix = dir ? `${dir}/` : ''
+  return (data.files ?? [])
+    .map((file) => file.filename)
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => name.slice(prefix.length))
+}

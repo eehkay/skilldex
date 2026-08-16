@@ -22,7 +22,7 @@ import path from 'node:path'
 import { createConfigStore } from '../electron/main/workspace/config'
 import { createLibraryStore } from '../electron/main/workspace/library-store'
 import { createSkillWorkspace } from '../electron/main/workspace/skill-workspace'
-import { logger } from '../electron/main/workspace/log'
+import { enableLogPersistence, logger } from '../electron/main/workspace/log'
 import { createApiRoutes, handleApi } from './router'
 import { serveStatic } from './static'
 
@@ -40,6 +40,8 @@ const staticRoot = process.env.SKILLDEX_STATIC_DIR || path.join(__dirname, '..',
 
 async function main(): Promise<void> {
   await fs.mkdir(homeDir, { recursive: true })
+  // Keep the log on the data volume so the Logs view survives redeploys.
+  await enableLogPersistence(path.join(dataDir, 'hub.log.jsonl'))
 
   const workspace = createSkillWorkspace({
     homeDir,

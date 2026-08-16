@@ -78,6 +78,11 @@ contextBridge.exposeInMainWorld('skilldex', {
       ipcRenderer.invoke('skilldex:converge-machine', name, dirNames),
     clearMachine: (name: string, dirNames?: string[]): Promise<ClearResult> =>
       ipcRenderer.invoke('skilldex:clear-machine', name, dirNames),
+    checkUpdates: (): Promise<unknown> => ipcRenderer.invoke('skilldex:check-updates'),
+    applyUpdates: (skillIds?: string[]): Promise<unknown> => ipcRenderer.invoke('skilldex:apply-updates', skillIds),
+    findOrigin: (id: string): Promise<unknown> => ipcRenderer.invoke('skilldex:find-origin', id),
+    linkOrigin: (id: string, origin: { repo: string; path: string; ref: string }): Promise<WorkspaceSnapshot> =>
+      ipcRenderer.invoke('skilldex:link-origin', id, origin),
     categorizeLibrary: (options?: { force?: boolean }): Promise<CategorizeResult> =>
       ipcRenderer.invoke('skilldex:categorize-library', options),
     setSkillCategory: (id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot> =>

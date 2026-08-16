@@ -6,8 +6,10 @@ import {
   type CreateSkillInput,
   type ImportSkillArchiveInput,
   type InstallRepoSkillInput,
+  type CheckUpdatesResult,
   type LogEntry,
   type MachineRecord,
+  type OriginCandidate,
   type MachineSnapshot,
   type RepoCatalog,
   type MachineDiff,
@@ -58,6 +60,10 @@ export type WorkspaceState = {
   adoptFromMachine: (name: string, skillIds: string[]) => Promise<{ adopted: string[]; failed: Record<string, string> } | null>
   convergeMachine: (name: string, dirNames?: string[]) => Promise<{ installed: string[]; failed: Record<string, string> } | null>
   clearMachine: (name: string, dirNames?: string[]) => Promise<{ removed: string[]; failed: Record<string, string>; kept: string[] } | null>
+  checkUpdates: () => Promise<CheckUpdatesResult | null>
+  applyUpdates: (skillIds?: string[]) => Promise<{ updated: string[]; failed: Record<string, string>; repushed: Record<string, { ok: string[]; failed: Record<string, string> }> } | null>
+  findOrigin: (id: string) => Promise<OriginCandidate[]>
+  linkOrigin: (id: string, origin: { repo: string; path: string; ref: string }) => Promise<WorkspaceSnapshot | null>
   categorizeLibrary: (options?: { force?: boolean }) => Promise<{ categorized: number; uncategorized: number; usedLlm: boolean } | null>
   getLogs: (limit?: number) => Promise<LogEntry[]>
   setSkillCategory: (id: string, category: SkillCategory | null) => Promise<WorkspaceSnapshot | null>
@@ -314,6 +320,31 @@ export function useWorkspace(): WorkspaceState {
     }
   }, [replaceMachine])
 
+  const checkUpdates = useCallback(async () => (await bridge()?.checkUpdates()) ?? null, [])
+
+  const applyUpdates = useCallback(async (skillIds?: string[]) => {
+    setLoading(true)
+    try {
+      const result = await bridge()?.applyUpdates(skillIds)
+      if (!result) return null
+      setSnapshot(result.workspace)
+      setError(null)
+      return { updated: result.updated, failed: result.failed, repushed: result.repushed }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      throw new Error(message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const findOrigin = useCallback(async (id: string) => (await bridge()?.findOrigin(id)) ?? [], [])
+  const linkOrigin = useCallback(
+    (id: string, origin: { repo: string; path: string; ref: string }) => mutate((w) => w.linkOrigin(id, origin)),
+    [mutate],
+  )
+
   const categorizeLibrary = useCallback(async (options?: { force?: boolean }) => {
     setLoading(true)
     try {
@@ -405,6 +436,10 @@ export function useWorkspace(): WorkspaceState {
     adoptFromMachine,
     convergeMachine,
     clearMachine,
+    checkUpdates,
+    applyUpdates,
+    findOrigin,
+    linkOrigin,
     categorizeLibrary,
     setSkillCategory,
     getLogs,

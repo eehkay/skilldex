@@ -23,11 +23,59 @@ function threshold(): number {
 export type LogFields = Record<string, unknown>
 
 /** Ring buffer of recent entries so the API can expose them (e.g. /api/logs). */
-const RECENT_MAX = 500
-const recent: Array<{ ts: string; level: LogLevel; event: string } & LogFields> = []
+const RECENT_MAX = 2000
+type Entry = { ts: string; level: LogLevel; event: string } & LogFields
+const recent: Entry[] = []
 
-export function recentLogs(limit = 200): typeof recent {
+export function recentLogs(limit = 200): Entry[] {
   return recent.slice(-limit)
+}
+
+/**
+ * Optional on-disk persistence so the log survives restarts and redeploys.
+ * `enableLogPersistence(file)` replays the tail of an existing file into the
+ * ring buffer, then appends every new entry (JSONL) and trims the file when
+ * it grows past ~2× the buffer so it can't grow unbounded on the volume.
+ */
+let persistFile: string | null = null
+let pending: Promise<void> = Promise.resolve()
+
+export async function enableLogPersistence(file: string): Promise<void> {
+  const fs = await import('node:fs/promises')
+  const path = await import('node:path')
+  persistFile = file
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  try {
+    const raw = await fs.readFile(file, 'utf8')
+    const lines = raw.split('\n').filter(Boolean).slice(-RECENT_MAX)
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line) as Entry
+        if (entry && typeof entry.ts === 'string' && typeof entry.event === 'string') recent.push(entry)
+      } catch {
+        // skip a torn line
+      }
+    }
+  } catch {
+    // no file yet
+  }
+}
+
+function persist(entry: Entry): void {
+  if (!persistFile) return
+  const file = persistFile
+  pending = pending
+    .then(async () => {
+      const fs = await import('node:fs/promises')
+      await fs.appendFile(file, JSON.stringify(entry) + '\n', 'utf8')
+      // Trim occasionally: rewrite from the in-memory buffer when the file is large.
+      if (recent.length >= RECENT_MAX && Math.random() < 0.01) {
+        const tmp = `${file}.${process.pid}.tmp`
+        await fs.writeFile(tmp, recent.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8')
+        await fs.rename(tmp, file)
+      }
+    })
+    .catch(() => {})
 }
 
 function serialize(fields: LogFields): LogFields {
@@ -40,9 +88,10 @@ function serialize(fields: LogFields): LogFields {
 }
 
 export function log(level: LogLevel, event: string, fields: LogFields = {}): void {
-  const entry = { ts: new Date().toISOString(), level, event, ...serialize(fields) }
+  const entry: Entry = { ts: new Date().toISOString(), level, event, ...serialize(fields) }
   recent.push(entry)
   if (recent.length > RECENT_MAX) recent.splice(0, recent.length - RECENT_MAX)
+  persist(entry)
   if (ORDER[level] < threshold()) return
   const line = JSON.stringify(entry)
   if (level === 'error' || level === 'warn') process.stderr.write(line + '\n')

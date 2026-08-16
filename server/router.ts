@@ -120,6 +120,20 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
         throw new Error(`Unknown category "${String(category)}". One of: ${CATEGORY_IDS.join(', ')}.`)
       return workspace.setSkillCategory(id, category as SkillCategory | null)
     }],
+    ['GET /api/updates', async () => workspace.checkUpdates()],
+    ['POST /api/apply-updates', async (_q, body) =>
+      workspace.applyUpdates(Array.isArray(body.skillIds) ? (body.skillIds as string[]) : undefined)],
+    ['GET /api/find-origin', async (q) => {
+      const id = q.get('id')
+      if (!id) throw new Error('Missing skill id.')
+      return workspace.findOrigin(id)
+    }],
+    ['POST /api/link-origin', async (_q, body) => {
+      const id = typeof body.id === 'string' ? body.id : ''
+      const origin = body.origin as { repo?: unknown; path?: unknown; ref?: unknown } | undefined
+      if (!id || !origin || typeof origin.repo !== 'string' || typeof origin.ref !== 'string') throw new Error('Missing id or origin.')
+      return workspace.linkOrigin(id, { repo: origin.repo, path: typeof origin.path === 'string' ? origin.path : '', ref: origin.ref })
+    }],
     ['POST /api/clear-machine', async (_q, body) => {
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
       return workspace.clearMachine(body.name, Array.isArray(body.dirNames) ? (body.dirNames as string[]) : undefined)

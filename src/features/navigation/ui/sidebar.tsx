@@ -287,7 +287,6 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, machines,
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[12.5px] font-medium text-[#e4e4e7]">Local machine</div>
-          <div className="text-[11px] text-[#52525b]">Sign in coming soon</div>
         </div>
         <button
           type="button"

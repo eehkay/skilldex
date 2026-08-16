@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, Copy, ExternalLink, FolderOpen, Loader2, Pencil, Server } from 'lucide-react'
-import { CATEGORY_LABELS, CATEGORY_ORDER, scopePillClass, shortRef, type MachineSnapshot, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillCategory, type SkillFile, formatSize, dirNameOf } from '../model/skills'
+import { CATEGORY_LABELS, CATEGORY_ORDER, scopePillClass, shortRef, type MachineSnapshot, type OriginCandidate, type SetSkillEnabledInput, type SetSyndicationInput, type Skill, type SkillCategory, type SkillFile, formatSize, dirNameOf } from '../model/skills'
 import { FavouriteButton } from './favourite-button'
+import { OriginFinderPanel } from './origin-finder-panel'
 import { SkillToggle } from './skill-toggle'
 
 type SkillDetailProps = {
@@ -17,12 +18,14 @@ type SkillDetailProps = {
   onSetSyndication: (input: SetSyndicationInput) => Promise<void>
   onSetSkillEnabled: (input: SetSkillEnabledInput) => Promise<void>
   onSetCategory: (category: SkillCategory | null) => Promise<void>
+  findOrigin: (id: string) => Promise<OriginCandidate[]>
+  onLinkOrigin: (origin: { repo: string; path: string; ref: string }) => Promise<void>
   onBack: () => void
 }
 
 type Tab = 'instructions' | 'files' | 'activity'
 
-export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onSetCategory, onBack }: SkillDetailProps) {
+export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onToggle, onToggleFavourite, onRemove, onSetSyndication, onSetSkillEnabled, onSetCategory, findOrigin, onLinkOrigin, onBack }: SkillDetailProps) {
   const [tab, setTab] = useState<Tab>('instructions')
   const [readme, setReadme] = useState<string | null>(null)
   const [files, setFiles] = useState<SkillFile[] | null>(null)
@@ -233,6 +236,10 @@ export function SkillDetail({ skill, machines, getReadme, listFiles, reveal, onT
               </div>
             )}
           </>
+        )}
+
+        {skill.scope === 'global' && skill.library && !skill.library.repo && (
+          <OriginFinderPanel skill={skill} findOrigin={findOrigin} onLink={onLinkOrigin} />
         )}
 
         <div className="mb-2.5 mt-5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#52525b]">
