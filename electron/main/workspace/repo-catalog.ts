@@ -16,6 +16,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { parseFrontmatter } from './frontmatter'
+import { clearDanglingSkillPath, inspectSkillPath } from './skill-manager'
 import type { RepoCatalog, RepoSkill } from './types'
 
 export type FetchLike = (url: string, init?: { headers?: Record<string, string> }) => Promise<{
@@ -178,7 +179,9 @@ export async function downloadRepoSkill(opts: {
   fetchImpl: FetchLike
 }): Promise<void> {
   const { slug, ref, dir, files, dest, fetchImpl } = opts
-  await assertMissing(dest, `A skill named "${path.basename(dest)}" already exists.`)
+  const state = await inspectSkillPath(dest)
+  if (state === 'present') throw new Error(`A skill named "${path.basename(dest)}" already exists.`)
+  if (state === 'dangling') await clearDanglingSkillPath(dest)
   await fs.mkdir(dest, { recursive: true })
   try {
     await mapPool(files, FETCH_POOL, async (file) => {
@@ -282,11 +285,3 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return results
 }
 
-async function assertMissing(target: string, message: string): Promise<void> {
-  try {
-    await fs.access(target)
-  } catch {
-    return
-  }
-  throw new Error(message)
-}

@@ -27,7 +27,14 @@ import {
   fetchRepoCatalog,
   type FetchLike,
 } from '../electron/main/workspace/repo-catalog'
-import { disableSkillDir, enableSkillDir, removeSkillDir, slugify } from '../electron/main/workspace/skill-manager'
+import {
+  clearDanglingSkillPath,
+  disableSkillDir,
+  enableSkillDir,
+  inspectSkillPath,
+  removeSkillDir,
+  slugify,
+} from '../electron/main/workspace/skill-manager'
 import { createSkillWorkspace, writeSkillLockEntry } from '../electron/main/workspace/skill-workspace'
 
 /** The desktop app's config path on this machine (Electron's userData layout). */
@@ -170,8 +177,11 @@ async function main(): Promise<void> {
         throw new Error(`Invalid skill folder name: ${input.dirName}`)
       const root = path.join(homeDir, '.claude', 'skills')
       const dest = path.join(root, input.dirName)
-      const exists = await fs.access(dest).then(() => true).catch(() => false)
-      if (exists) throw new Error(`A skill named "${input.dirName}" already exists on this machine.`)
+      // A dangling symlink (e.g. left behind by a wiped ~/.agents/skills) is
+      // debris, not a skill — replace it. A real entry is protected.
+      const state = await inspectSkillPath(dest)
+      if (state === 'present') throw new Error(`A skill named "${input.dirName}" already exists on this machine.`)
+      if (state === 'dangling') await clearDanglingSkillPath(dest)
       await fs.mkdir(dest, { recursive: true })
       try {
         for (const file of input.files) {

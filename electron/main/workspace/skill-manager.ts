@@ -103,3 +103,33 @@ async function assertMissing(target: string, message?: string): Promise<void> {
   }
   throw new Error(message ?? `Path already exists: ${target}`)
 }
+
+/**
+ * What occupies a skill path: nothing, a real entry, or a symlink whose
+ * target is gone. `fs.access` follows links and reports a dangling one as
+ * absent — then `mkdir` trips over it with ENOENT. Installers must use this
+ * so leftover links (e.g. from a wiped ~/.agents/skills) get replaced rather
+ * than blocking every write.
+ */
+export async function inspectSkillPath(target: string): Promise<'missing' | 'present' | 'dangling'> {
+  let info
+  try {
+    info = await fs.lstat(target)
+  } catch {
+    return 'missing'
+  }
+  if (!info.isSymbolicLink()) return 'present'
+  try {
+    await fs.stat(target) // follows the link
+    return 'present'
+  } catch {
+    return 'dangling'
+  }
+}
+
+/** Remove a dangling symlink at `target` if that is what is there. */
+export async function clearDanglingSkillPath(target: string): Promise<boolean> {
+  if ((await inspectSkillPath(target)) !== 'dangling') return false
+  await fs.unlink(target)
+  return true
+}

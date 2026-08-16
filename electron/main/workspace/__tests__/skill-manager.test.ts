@@ -110,3 +110,37 @@ describe('scaffoldSkill', () => {
     await expect(scaffoldSkill(root, 'dupe', 'second')).rejects.toThrow(/exists/i)
   })
 })
+
+describe('dangling symlink handling', () => {
+  it('inspectSkillPath distinguishes missing, present, and dangling', async () => {
+    const { inspectSkillPath, clearDanglingSkillPath } = await import('../skill-manager')
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-dangling-'))
+    try {
+      const root = path.join(tmp, '.claude', 'skills')
+      await fs.mkdir(root, { recursive: true })
+      // The arch-dev state: a `skills` CLI symlink into ~/.agents/skills whose target was wiped.
+      await fs.symlink('../../.agents/skills/ab-testing', path.join(root, 'ab-testing'))
+      await fs.mkdir(path.join(root, 'real'))
+
+      expect(await inspectSkillPath(path.join(root, 'nope'))).toBe('missing')
+      expect(await inspectSkillPath(path.join(root, 'real'))).toBe('present')
+      expect(await inspectSkillPath(path.join(root, 'ab-testing'))).toBe('dangling')
+
+      // A link whose target exists is a real (present) skill.
+      await fs.mkdir(path.join(tmp, '.agents', 'skills', 'live'), { recursive: true })
+      await fs.symlink('../../.agents/skills/live', path.join(root, 'live'))
+      expect(await inspectSkillPath(path.join(root, 'live'))).toBe('present')
+
+      // Clearing only touches dangling links.
+      expect(await clearDanglingSkillPath(path.join(root, 'ab-testing'))).toBe(true)
+      expect(await inspectSkillPath(path.join(root, 'ab-testing'))).toBe('missing')
+      expect(await clearDanglingSkillPath(path.join(root, 'live'))).toBe(false)
+      expect(await clearDanglingSkillPath(path.join(root, 'real'))).toBe(false)
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true })
+    }
+  })
+})

@@ -280,3 +280,33 @@ describe('SkillWorkspace repo integration', () => {
     await expect(fs.access(path.join(tmp, '.claude', 'skills', 'tdd', 'SKILL.md'))).resolves.toBeUndefined()
   })
 })
+
+describe('downloadRepoSkill over leftover symlinks', () => {
+  it('replaces a dangling symlink at the destination instead of failing with ENOENT', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-dl-dangling-'))
+    try {
+      const { fetch } = fakeGitHub(skillsRepoRoutes())
+      const dest = path.join(tmp, 'pdf-filler')
+      await fs.symlink(path.join(tmp, 'gone', 'pdf-filler'), dest) // target does not exist
+      await downloadRepoSkill({ slug: SLUG, ref: 'main', dir: 'skills/pdf-filler', files: ['SKILL.md'], dest, fetchImpl: fetch })
+      expect((await fs.lstat(dest)).isSymbolicLink()).toBe(false)
+      expect(await fs.readFile(path.join(dest, 'SKILL.md'), 'utf8')).toContain('Fill PDF forms')
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('still refuses to overwrite a symlink whose target exists', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-dl-live-'))
+    try {
+      const { fetch } = fakeGitHub(skillsRepoRoutes())
+      const real = path.join(tmp, 'real-skill'); await fs.mkdir(real)
+      const dest = path.join(tmp, 'pdf-filler'); await fs.symlink(real, dest)
+      await expect(
+        downloadRepoSkill({ slug: SLUG, ref: 'main', dir: 'skills/pdf-filler', files: ['SKILL.md'], dest, fetchImpl: fetch }),
+      ).rejects.toThrow(/already exists/)
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true })
+    }
+  })
+})
