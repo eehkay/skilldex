@@ -7,6 +7,7 @@ import type {
   CreateSkillInput,
   ImportSkillArchiveInput,
   InstallRepoSkillInput,
+  LogEntry,
   MachineDiff,
   MachineRecord,
   MachineSnapshot,
@@ -38,6 +39,7 @@ declare global {
         toggleFavourite(id: string): Promise<WorkspaceSnapshot>
         createSkill(input: CreateSkillInput): Promise<WorkspaceSnapshot>
         importSkillArchive(input: ImportSkillArchiveInput): Promise<WorkspaceSnapshot>
+        getLogs(limit?: number): Promise<LogEntry[]>
         listRepoCatalogs(): Promise<RepoCatalog[]>
         addSkillRepo(input: string): Promise<RepoCatalog[]>
         removeSkillRepo(slug: string): Promise<RepoCatalog[]>

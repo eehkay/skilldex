@@ -1,4 +1,4 @@
-import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Pencil, Plus, PowerOff, Search, Server, Settings, X } from 'lucide-react'
+import { AlertCircle, Blocks, Boxes, FolderGit2, Globe, Heart, LayoutGrid, Monitor, PackageSearch, Pencil, Plus, PowerOff, ScrollText, Search, Server, Settings, X } from 'lucide-react'
 import { useEffect, useRef, type ComponentType } from 'react'
 import { ACCENT_PALETTE, type MachineSnapshot, type ProjectRecord, type RepoCatalog } from '@/features/skills/model/skills'
 
@@ -25,6 +25,8 @@ type SidebarProps = {
   onAddMachine: () => void
   onEditMachine: (name: string) => void
   onOpenSettings: () => void
+  onOpenLogs: () => void
+  logsActive: boolean
 }
 
 const NAV: Array<{ key: FilterKey; label: string; icon: ComponentType<{ className?: string }> }> = [
@@ -36,7 +38,7 @@ const NAV: Array<{ key: FilterKey; label: string; icon: ComponentType<{ classNam
   { key: 'disabled', label: 'Disabled', icon: PowerOff },
 ]
 
-export function Sidebar({ active, counts, projects, repos, activeRepo, machines, activeMachine, query, onQuery, onFilter, onSelectRepo, onAddRepo, onSelectMachine, onAddMachine, onEditMachine, onOpenSettings }: SidebarProps) {
+export function Sidebar({ active, counts, projects, repos, activeRepo, machines, activeMachine, query, onQuery, onFilter, onSelectRepo, onAddRepo, onSelectMachine, onAddMachine, onEditMachine, onOpenSettings, onOpenLogs, logsActive }: SidebarProps) {
   const searchInput = useRef<HTMLInputElement>(null)
 
   // ⌘K / Ctrl+K focuses search from anywhere; Esc in the box clears and blurs.
@@ -103,7 +105,7 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, machines,
       <nav className="flex flex-col gap-0.5">
         {NAV.map((item) => {
           const Icon = item.icon
-          const isActive = active === item.key && activeRepo === null && activeMachine === null
+          const isActive = active === item.key && activeRepo === null && activeMachine === null && !logsActive
           return (
             <button
               key={item.key}
@@ -287,6 +289,17 @@ export function Sidebar({ active, counts, projects, repos, activeRepo, machines,
           <div className="text-[12.5px] font-medium text-[#e4e4e7]">Local machine</div>
           <div className="text-[11px] text-[#52525b]">Sign in coming soon</div>
         </div>
+        <button
+          type="button"
+          onClick={onOpenLogs}
+          aria-label="Logs"
+          title="Logs"
+          className={`grid size-7 place-items-center rounded-lg transition hover:bg-[#141417] ${
+            logsActive ? 'text-[#fb923c]' : 'text-[#52525b] hover:text-[#a1a1aa]'
+          }`}
+        >
+          <ScrollText className="size-4" />
+        </button>
         <button
           type="button"
           onClick={onOpenSettings}

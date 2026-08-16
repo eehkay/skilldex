@@ -6,6 +6,7 @@ import {
   type CreateSkillInput,
   type ImportSkillArchiveInput,
   type InstallRepoSkillInput,
+  type LogEntry,
   type MachineRecord,
   type MachineSnapshot,
   type RepoCatalog,
@@ -57,6 +58,7 @@ export type WorkspaceState = {
   adoptFromMachine: (name: string, skillIds: string[]) => Promise<{ adopted: string[]; failed: Record<string, string> } | null>
   convergeMachine: (name: string, dirNames?: string[]) => Promise<{ installed: string[]; failed: Record<string, string> } | null>
   categorizeLibrary: (options?: { force?: boolean }) => Promise<{ categorized: number; uncategorized: number; usedLlm: boolean } | null>
+  getLogs: (limit?: number) => Promise<LogEntry[]>
   setSkillCategory: (id: string, category: SkillCategory | null) => Promise<WorkspaceSnapshot | null>
 }
 
@@ -293,6 +295,8 @@ export function useWorkspace(): WorkspaceState {
     }
   }, [])
 
+  const getLogs = useCallback(async (limit?: number) => (await bridge()?.getLogs(limit)) ?? [], [])
+
   const categorizeLibrary = useCallback(async (options?: { force?: boolean }) => {
     setLoading(true)
     try {
@@ -389,5 +393,6 @@ export function useWorkspace(): WorkspaceState {
     convergeMachine,
     categorizeLibrary,
     setSkillCategory,
+    getLogs,
   }
 }

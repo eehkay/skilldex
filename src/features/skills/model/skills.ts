@@ -325,3 +325,10 @@ export const emptySnapshot: WorkspaceSnapshot = {
   scannedAt: '',
   homeDir: '',
 }
+
+export type LogEntry = {
+  ts: string
+  level: 'debug' | 'info' | 'warn' | 'error'
+  event: string
+  [field: string]: unknown
+}

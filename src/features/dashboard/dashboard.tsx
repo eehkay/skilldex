@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import { MachineDialog } from '@/features/machines/ui/machine-dialog'
+import { LogsView } from '@/features/logs/ui/logs-view'
 import { MachineView } from '@/features/machines/ui/machine-view'
 import { Sidebar, type FilterKey, type SidebarCounts } from '@/features/navigation/ui/sidebar'
 import { AddRepoDialog } from '@/features/repos/ui/add-repo-dialog'
@@ -97,6 +98,7 @@ export function Dashboard() {
     convergeMachine,
     categorizeLibrary,
     setSkillCategory,
+    getLogs,
   } = useWorkspace()
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
@@ -108,6 +110,7 @@ export function Dashboard() {
   const [installTarget, setInstallTarget] = useState<RepoSkill | null>(null)
   const [activeMachine, setActiveMachine] = useState<string | null>(null)
   const [category, setCategory] = useState<SkillCategory | 'uncategorized' | null>(null)
+  const [showLogs, setShowLogs] = useState(false)
   const [categorizing, setCategorizing] = useState(false)
   const [categorizeNote, setCategorizeNote] = useState<string | null>(null)
   // null = closed, 'add' = new machine, otherwise the name of the machine being edited.
@@ -280,17 +283,21 @@ export function Dashboard() {
         activeMachine={activeMachine}
         query={query}
         onQuery={search}
-        onFilter={(key) => { setFilter(key); setSelectedId(null); setActiveRepo(null); setActiveMachine(null); setCategory(null) }}
-        onSelectRepo={(slug) => { setActiveRepo(slug); setSelectedId(null); setActiveMachine(null) }}
+        onFilter={(key) => { setFilter(key); setSelectedId(null); setActiveRepo(null); setActiveMachine(null); setCategory(null); setShowLogs(false) }}
+        onSelectRepo={(slug) => { setActiveRepo(slug); setSelectedId(null); setActiveMachine(null); setShowLogs(false) }}
         onAddRepo={() => setShowAddRepo(true)}
-        onSelectMachine={(name) => { setActiveMachine(name); setSelectedId(null); setActiveRepo(null) }}
+        onSelectMachine={(name) => { setActiveMachine(name); setSelectedId(null); setActiveRepo(null); setShowLogs(false) }}
         onAddMachine={() => setMachineDialog('add')}
+        onOpenLogs={() => { setShowLogs(true); setSelectedId(null); setActiveRepo(null); setActiveMachine(null) }}
+        logsActive={showLogs}
         onEditMachine={(name) => setMachineDialog(name)}
         onOpenSettings={() => setShowSettings(true)}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {activeMachineEntry ? (
+        {showLogs ? (
+          <LogsView getLogs={getLogs} />
+        ) : activeMachineEntry ? (
           <MachineView
             entry={activeMachineEntry}
             busy={machinesLoading}

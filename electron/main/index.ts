@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createConfigStore } from './workspace/config'
 import { createLibraryStore } from './workspace/library-store'
+import { recentLogs } from './workspace/log'
 import { createSkillWorkspace, type SetSkillEnabledInput, type SetSyndicationInput } from './workspace/skill-workspace'
 import type {
   CreateSkillInput,
@@ -89,6 +90,7 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:import-skill-archive', (_event, input: ImportSkillArchiveInput) =>
     workspace.importSkillArchive(input),
   )
+  ipcMain.handle('skilldex:get-logs', (_event, limit?: number) => recentLogs(limit))
   ipcMain.handle('skilldex:list-repo-catalogs', () => workspace.listRepoCatalogs())
   ipcMain.handle('skilldex:add-skill-repo', (_event, input: string) => workspace.addSkillRepo(input))
   ipcMain.handle('skilldex:remove-skill-repo', (_event, slug: string) => workspace.removeSkillRepo(slug))

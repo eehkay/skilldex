@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('skilldex', {
       ipcRenderer.invoke('skilldex:create-skill', input),
     importSkillArchive: (input: ImportSkillArchiveInput): Promise<WorkspaceSnapshot> =>
       ipcRenderer.invoke('skilldex:import-skill-archive', input),
+    getLogs: (limit?: number): Promise<unknown[]> => ipcRenderer.invoke('skilldex:get-logs', limit),
     listRepoCatalogs: (): Promise<RepoCatalog[]> => ipcRenderer.invoke('skilldex:list-repo-catalogs'),
     addSkillRepo: (input: string): Promise<RepoCatalog[]> =>
       ipcRenderer.invoke('skilldex:add-skill-repo', input),

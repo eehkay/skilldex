@@ -20,6 +20,7 @@ import type {
   CreateSkillInput,
   ImportSkillArchiveInput,
   InstallRepoSkillInput,
+  LogEntry,
   MachineDiff,
   MachineRecord,
   MachineSnapshot,
@@ -76,6 +77,7 @@ export function createHttpBridge(): WorkspaceBridge {
     createSkill: (input: CreateSkillInput) => call<WorkspaceSnapshot>('POST', 'create-skill', { input }),
     importSkillArchive: (input: ImportSkillArchiveInput) =>
       call<WorkspaceSnapshot>('POST', 'import-skill-archive', { input }),
+    getLogs: (limit = 300) => call<LogEntry[]>('GET', `logs?limit=${limit}`),
     listRepoCatalogs: () => call<RepoCatalog[]>('GET', 'repos'),
     addSkillRepo: (input: string) => call<RepoCatalog[]>('POST', 'add-repo', { input }),
     removeSkillRepo: (slug: string) => call<RepoCatalog[]>('POST', 'remove-repo', { slug }),
