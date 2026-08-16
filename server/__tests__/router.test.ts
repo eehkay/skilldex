@@ -110,4 +110,34 @@ describe('hub API', () => {
     ).json()
     expect(bad.valid).toBe(false)
   })
+
+  it('imports loose files, looks a skill up by name, and rejects distribute with no machines', async () => {
+    const imported = await fetch(`${base}/api/import-skill-files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: {
+          scope: 'global',
+          files: [{ path: 'SKILL.md', content: '---\nname: api-made\ndescription: via API\n---\n' }],
+        },
+      }),
+    })
+    expect(imported.status).toBe(200)
+    expect((await imported.json()).dirName).toBe('api-made')
+
+    const lookup = await (await fetch(`${base}/api/skill?name=api-made`)).json()
+    expect(lookup.library.map((skill: { name: string }) => skill.name)).toEqual(['api-made'])
+    expect(lookup.machines).toEqual([])
+
+    const missing = await fetch(`${base}/api/skill`)
+    expect(missing.status).toBe(400)
+
+    const distribute = await fetch(`${base}/api/distribute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'api-made' }),
+    })
+    expect(distribute.status).toBe(400)
+    expect((await distribute.json()).error).toMatch(/machine/i)
+  })
 })

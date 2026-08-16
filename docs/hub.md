@@ -19,6 +19,23 @@ Environment: `SKILLDEX_DATA_DIR` (config + hub library, default `~/.skilldex`),
 `SKILLDEX_PORT` (default 8654), `SKILLDEX_HOST` (default 0.0.0.0),
 `SKILLDEX_STATIC_DIR` (defaults to the renderer build next to the bundle).
 
+## API for agents
+
+Every workspace operation is a JSON route under `/api/*` (see
+`server/router.ts`). Three routes exist specifically so a Claude session on
+any tailnet machine can drive the hub without the UI:
+
+- `GET /api/skill?name=<name>` — where a skill lives: library copies plus
+  per-machine presence (returns the ids the other routes need).
+- `POST /api/import-skill-files` — upload a skill as loose files
+  (`{input:{files:[{path, content|base64}], scope, replace?}}`), no zip.
+- `POST /api/distribute` — push a library skill to some or all machines
+  (`{name, machines?, replace?}`); repo-backed skills are pulled pinned,
+  file-backed ones are pushed.
+
+The `skillsync` skill in `skills/skillsync/` wraps these for Claude Code, with
+the full route/payload table in `skills/skillsync/references/api.md`.
+
 ## Deploy on Coolify
 
 1. New resource → Docker Compose, pointing at this repo/branch

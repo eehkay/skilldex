@@ -184,3 +184,21 @@ export async function writeSkillArchive(root: string, plan: SkillArchive): Promi
   }
   return dest
 }
+
+/**
+ * Clear the way for `writeSkillArchive` to replace `root/<dirName>` (enabled
+ * or disabled). Refuses symlinked skills — the files live elsewhere and the
+ * caller almost certainly wants to edit that target, not swap the link.
+ */
+export async function removeSkillForReplace(root: string, dirName: string): Promise<boolean> {
+  let removed = false
+  for (const target of [path.join(root, dirName), path.join(root, '.disabled', dirName)]) {
+    const info = await fs.lstat(target).catch(() => null)
+    if (!info) continue
+    if (info.isSymbolicLink())
+      throw new Error(`"${dirName}" is a symlink to another location — update its target instead of replacing it.`)
+    await fs.rm(target, { recursive: true, force: true })
+    removed = true
+  }
+  return removed
+}

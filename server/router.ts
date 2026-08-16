@@ -36,6 +36,15 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
     ['POST /api/toggle-favourite', async (q, b) => workspace.toggleFavourite(id(q, b))],
     ['POST /api/create-skill', async (_q, body) => workspace.createSkill(body.input as never)],
     ['POST /api/import-skill-archive', async (_q, body) => workspace.importSkillArchive(body.input as never)],
+    // Agent-facing: upload a skill as loose files, look one up by name, push it to machines.
+    ['POST /api/import-skill-files', async (_q, body) => workspace.importSkillFiles((body.input ?? body) as never)],
+    ['GET /api/skill', async (q) => {
+      const name = q.get('name') ?? q.get('id')
+      if (!name) throw new Error('Missing skill name (?name=).')
+      const flag = q.get('machines')
+      return workspace.findSkill(name, { machines: !(flag === '0' || flag === 'false') })
+    }],
+    ['POST /api/distribute', async (_q, body) => workspace.distributeSkill((body.input ?? body) as never)],
     ['GET /api/repos', async () => workspace.listRepoCatalogs()],
     ['POST /api/add-repo', async (_q, body) => {
       if (typeof body.input !== 'string') throw new Error('Missing repo input.')

@@ -200,6 +200,55 @@ export type CreateSkillInput = {
   projectName?: string
 }
 
+/** Where a named skill lives: library copies plus per-machine presence. */
+export type SkillLookup = {
+  name: string
+  /** Library skills whose name or folder matches (usually 0 or 1; project copies can add more). */
+  library: SkillRecord[]
+  machines: Array<{
+    machine: string
+    present: boolean
+    /** The machine's own record, when present (its `id` drives machine-skill-op). */
+    skill?: SkillRecord
+    /** Set when the machine could not be reached. */
+    error?: string
+  }>
+}
+
+/** A skill uploaded as loose files (no zip) — what an agent that just wrote one sends. */
+export type ImportSkillFilesInput = {
+  /** Paths relative to the skill folder (or under one wrapping folder); one must be SKILL.md. */
+  files: Array<{ path: string; content?: string; base64?: string }>
+  /** Folder name override; defaults to the SKILL.md frontmatter name. */
+  name?: string
+  scope: 'global' | 'project'
+  projectName?: string
+  /** Replace an existing skill of the same name instead of failing. */
+  replace?: boolean
+}
+
+export type ImportSkillFilesResult = {
+  dirName: string
+  path: string
+  workspace: WorkspaceSnapshot
+}
+
+/** Push one library skill to machines (all configured by default). */
+export type DistributeSkillInput = {
+  /** Library skill by name/folder — or `skillId` for an exact record. */
+  name?: string
+  skillId?: string
+  machines?: string[]
+  /** Re-push where the machine already has the skill (remove, then install). */
+  replace?: boolean
+}
+
+export type DistributeSkillResult = {
+  dirName: string
+  results: Record<string, { status: 'installed' | 'replaced' | 'present' | 'failed'; error?: string }>
+  workspace: WorkspaceSnapshot
+}
+
 /** A zipped skill uploaded from the UI, to be unpacked into a skills root. */
 export type ImportSkillArchiveInput = {
   /** Original filename (names a root-level skill with no frontmatter `name`). */

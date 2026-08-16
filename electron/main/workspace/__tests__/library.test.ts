@@ -273,6 +273,11 @@ describe('machine diff, adopt, converge', () => {
         machineSkills.push({ ...machineSkills[0], id: `/home/k/.claude/skills/${parsed.dirName ?? 'x'}`, name: parsed.dirName ?? 'x', realPath: `/home/k/.claude/skills/${parsed.dirName ?? 'x'}` })
         return ok(JSON.stringify(snap))
       }
+      if (match[1] === 'remove') {
+        const index = machineSkills.findIndex((entry) => entry.id === parsed.id)
+        if (index >= 0) machineSkills.splice(index, 1)
+        return ok(JSON.stringify(snap))
+      }
       return ok(JSON.stringify(snap))
     }
     return exec
@@ -399,5 +404,150 @@ describe('clearMachine', () => {
     // Requested a machine-only skill: refused (kept), nothing removed.
     expect(result.removed).toEqual([])
     expect(result.kept).toEqual(['only-here'])
+  })
+})
+
+describe('agent-facing API: import files, lookup, distribute', () => {
+  let tmp: string
+  let ws: SkillWorkspace
+  let calls: Array<{ command: string; input: unknown }>
+
+  /** Fake machine with one skill already on it; honours write-skill and remove. */
+  function remote() {
+    calls = []
+    const machineSkills: Array<Record<string, unknown>> = [
+      {
+        id: '/home/k/.claude/skills/present', name: 'present', description: 'already there',
+        path: '/home/k/.claude/skills/present', realPath: '/home/k/.claude/skills/present',
+        sourceKind: 'Personal', sourceRoot: '~/.claude/skills', displayPath: '~/.claude/skills/present',
+        enabled: true, isFavourite: false, isSymlink: false, fileCount: 1, projects: [],
+      },
+    ]
+    const exec: ExecLike = async (_cmd, args, { input }) => {
+      const remoteCommand = args[args.length - 1]
+      const ok = (stdout: string): ExecResult => ({ stdout, stderr: '', code: 0 })
+      if (remoteCommand.includes('sha256sum')) return ok('missing')
+      if (remoteCommand.includes('cat >')) return ok('')
+      const match = /agent\.js ([\w-]+)/.exec(remoteCommand)
+      if (!match) return { stdout: '', stderr: 'unexpected', code: 1 }
+      const parsed = input ? JSON.parse(input) : undefined
+      calls.push({ command: match[1], input: parsed })
+      const snap = () => JSON.stringify({ skills: machineSkills, projects: [], sources: [], errors: [], scannedAt: '', homeDir: '/home/k' })
+      if (match[1] === 'ping') return ok(JSON.stringify({ ok: true }))
+      if (match[1] === 'write-skill') {
+        const dirName = parsed.dirName as string
+        machineSkills.push({ ...machineSkills[0], id: `/home/k/.claude/skills/${dirName}`, name: dirName, realPath: `/home/k/.claude/skills/${dirName}`, path: `/home/k/.claude/skills/${dirName}` })
+        return ok(snap())
+      }
+      if (match[1] === 'remove') {
+        const index = machineSkills.findIndex((entry) => entry.id === parsed.id)
+        if (index >= 0) machineSkills.splice(index, 1)
+        return ok(snap())
+      }
+      return ok(snap())
+    }
+    return exec
+  }
+
+  beforeEach(async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-agent-api-'))
+    const agentPath = path.join(tmp, 'agent.js')
+    await fs.writeFile(agentPath, '// agent')
+    ws = createSkillWorkspace({
+      homeDir: tmp,
+      configStore: createConfigStore(path.join(tmp, 'config.json')),
+      libraryStore: createLibraryStore(path.join(tmp, 'library.json')),
+      fetchImpl: fakeFetch(routes()),
+      agentPath,
+      execImpl: remote(),
+    })
+    await ws.addMachine({ name: 'tower', host: 'arch-tower', user: 'kellogg' })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  const FILES = [
+    { path: 'SKILL.md', content: '---\nname: hello-world\ndescription: Says hi\n---\n# Hello\n' },
+    { path: 'scripts/hi.sh', content: 'echo hi\n' },
+  ]
+
+  it('imports loose files as a skill, and replaces only when asked', async () => {
+    const first = await ws.importSkillFiles({ files: FILES, scope: 'global' })
+    expect(first.dirName).toBe('hello-world')
+    await expect(fs.readFile(path.join(tmp, '.claude', 'skills', 'hello-world', 'scripts', 'hi.sh'), 'utf8')).resolves.toBe('echo hi\n')
+    expect(first.workspace.skills.some((skill) => skill.name === 'hello-world')).toBe(true)
+
+    await expect(ws.importSkillFiles({ files: FILES, scope: 'global' })).rejects.toThrow('already exists')
+
+    const updated = [{ path: 'SKILL.md', content: '---\nname: hello-world\ndescription: v2\n---\n' }]
+    const second = await ws.importSkillFiles({ files: updated, scope: 'global', replace: true })
+    expect(second.dirName).toBe('hello-world')
+    // Old files are gone, not merged.
+    await expect(fs.access(path.join(tmp, '.claude', 'skills', 'hello-world', 'scripts'))).rejects.toThrow()
+
+    // An explicit name wins over the frontmatter name; base64 payloads work.
+    const named = await ws.importSkillFiles({
+      name: 'My Renamed Skill',
+      files: [{ path: 'SKILL.md', base64: Buffer.from('---\nname: whatever\n---\n').toString('base64') }],
+      scope: 'global',
+    })
+    expect(named.dirName).toBe('my-renamed-skill')
+  })
+
+  it('refuses to replace a symlinked skill', async () => {
+    const real = path.join(tmp, 'elsewhere', 'linked')
+    await fs.mkdir(real, { recursive: true })
+    await fs.writeFile(path.join(real, 'SKILL.md'), '---\nname: linked\n---\n')
+    await fs.mkdir(path.join(tmp, '.claude', 'skills'), { recursive: true })
+    await fs.symlink(real, path.join(tmp, '.claude', 'skills', 'linked'))
+    await expect(
+      ws.importSkillFiles({ files: [{ path: 'SKILL.md', content: '---\nname: linked\n---\n' }], scope: 'global', replace: true }),
+    ).rejects.toThrow('symlink')
+  })
+
+  it('finds a skill by name across the library and machines', async () => {
+    await ws.importSkillFiles({ files: FILES, scope: 'global' })
+    const hit = await ws.findSkill('Hello-World')
+    expect(hit.library.map((skill) => skill.name)).toEqual(['hello-world'])
+    expect(hit.machines).toEqual([{ machine: 'tower', present: false }])
+
+    const onMachine = await ws.findSkill('present')
+    expect(onMachine.library).toEqual([])
+    expect(onMachine.machines[0]).toMatchObject({ machine: 'tower', present: true, skill: { name: 'present' } })
+
+    const local = await ws.findSkill('present', { machines: false })
+    expect(local.machines).toEqual([])
+  })
+
+  it('distributes a hand-authored skill by pushing files, reports present, and can replace', async () => {
+    await ws.importSkillFiles({ files: FILES, scope: 'global' })
+
+    const first = await ws.distributeSkill({ name: 'hello-world' })
+    expect(first.dirName).toBe('hello-world')
+    expect(first.results).toEqual({ tower: { status: 'installed' } })
+    const push = calls.find((call) => call.command === 'write-skill')
+    expect(push?.input).toMatchObject({ dirName: 'hello-world' })
+    expect((push?.input as { files: Array<{ path: string }> }).files.map((file) => file.path).sort()).toEqual(['SKILL.md', 'scripts/hi.sh'])
+    // The ledger now knows tower has it.
+    const snapshot = await ws.getSnapshot()
+    expect(snapshot.skills.find((skill) => skill.name === 'hello-world')?.library?.targets).toEqual([{ machine: 'tower', scope: 'global' }])
+
+    calls.length = 0
+    const again = await ws.distributeSkill({ name: 'hello-world' })
+    expect(again.results).toEqual({ tower: { status: 'present' } })
+    expect(calls.some((call) => call.command === 'write-skill')).toBe(false)
+
+    calls.length = 0
+    const replaced = await ws.distributeSkill({ name: 'hello-world', replace: true })
+    expect(replaced.results).toEqual({ tower: { status: 'replaced' } })
+    expect(calls.map((call) => call.command)).toContain('remove')
+    expect(calls.map((call) => call.command)).toContain('write-skill')
+
+    await expect(ws.distributeSkill({ name: 'nope' })).rejects.toThrow('No library skill')
+    const unknown = await ws.distributeSkill({ name: 'hello-world', machines: ['ghost'] })
+    expect(unknown.results.ghost.status).toBe('failed')
+    expect(unknown.results.ghost.error).toContain('Unknown machine')
   })
 })

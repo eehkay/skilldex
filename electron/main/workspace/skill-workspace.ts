@@ -37,10 +37,23 @@ import {
   slugify,
 } from './skill-manager'
 import { createMachineManager, type ExecLike, type MachineManager } from './machines'
-import { MAX_ARCHIVE_BYTES, planSkillArchive, readZip, writeSkillArchive } from './skill-archive'
+import {
+  MAX_ARCHIVE_BYTES,
+  MAX_UNPACKED_BYTES,
+  planSkillArchive,
+  readZip,
+  removeSkillForReplace,
+  writeSkillArchive,
+  type ArchiveEntry,
+} from './skill-archive'
 import type {
   CreateSkillInput,
+  DistributeSkillInput,
+  DistributeSkillResult,
   ImportSkillArchiveInput,
+  ImportSkillFilesInput,
+  ImportSkillFilesResult,
+  SkillLookup,
   InstallRepoSkillInput,
   LibrarySkillMeta,
   MachineRecord,
@@ -151,6 +164,12 @@ export type SkillWorkspace = {
   createSkill(input: CreateSkillInput): Promise<WorkspaceSnapshot>
   /** Unpack a zipped skill into the global or a project skills root. Returns the fresh snapshot. */
   importSkillArchive(input: ImportSkillArchiveInput): Promise<WorkspaceSnapshot>
+  /** Write a skill from loose files (agent/API upload); `replace` swaps an existing copy. */
+  importSkillFiles(input: ImportSkillFilesInput): Promise<ImportSkillFilesResult>
+  /** Where a skill (by name, folder, or id) lives: library copies and each machine's copy. */
+  findSkill(name: string, options?: { machines?: boolean }): Promise<SkillLookup>
+  /** Push a library skill to machines — repo-pinned pull or file push, per skill provenance. */
+  distributeSkill(input: DistributeSkillInput): Promise<DistributeSkillResult>
   /** Catalogs for every configured skill repo (per-repo errors inline, never thrown). */
   listRepoCatalogs(): Promise<RepoCatalog[]>
   /** Validate, scan, and persist a new skill repo. Returns all catalogs. */
@@ -572,6 +591,104 @@ export function createSkillWorkspace({
       const root = await resolveTargetRoot(config, input.scope, input.projectName)
       await writeSkillArchive(root, plan)
       return buildSnapshot(config)
+    },
+
+    async importSkillFiles(input) {
+      if (!Array.isArray(input.files) || input.files.length === 0) throw new Error('No files provided.')
+      let total = 0
+      const entries: ArchiveEntry[] = input.files.map((file) => {
+        if (typeof file.path !== 'string' || !file.path) throw new Error('Every file needs a path.')
+        const data =
+          typeof file.base64 === 'string'
+            ? Buffer.from(file.base64, 'base64')
+            : Buffer.from(typeof file.content === 'string' ? file.content : '', 'utf8')
+        total += data.length
+        if (total > MAX_UNPACKED_BYTES) throw new Error('Skill files exceed 64 MB.')
+        return { path: file.path, data }
+      })
+      const explicitName = input.name?.trim()
+      const plan = planSkillArchive(entries, explicitName || 'skill')
+      if (explicitName) plan.dirName = slugify(explicitName)
+
+      const config = await configStore.load()
+      const root = await resolveTargetRoot(config, input.scope, input.projectName)
+      if (input.replace) await removeSkillForReplace(root, plan.dirName)
+      const dir = await writeSkillArchive(root, plan)
+      logger.info('skill.import.files', { dirName: plan.dirName, scope: input.scope, replaced: Boolean(input.replace) })
+      return { dirName: plan.dirName, path: dir, workspace: await buildSnapshot(config) }
+    },
+
+    async findSkill(name, options = {}) {
+      const needle = name.trim()
+      if (!needle) throw new Error('A skill name is required.')
+      const config = await configStore.load()
+      const snapshot = await buildSnapshot(config)
+      const matches = (skill: SkillRecord) =>
+        skill.id === needle ||
+        skill.name.toLowerCase() === needle.toLowerCase() ||
+        dirNameOf(skill).toLowerCase() === needle.toLowerCase()
+      const library = snapshot.skills.filter(matches)
+
+      const includeMachines = options.machines !== false && machineManager !== null && config.machines.length > 0
+      const machines = includeMachines
+        ? (await snapshotsFor(config.machines)).map((entry) => {
+            if (!entry.snapshot) return { machine: entry.machine.name, present: false, error: entry.error ?? 'Not scanned.' }
+            const skill = entry.snapshot.skills.find(matches)
+            return skill
+              ? { machine: entry.machine.name, present: true, skill }
+              : { machine: entry.machine.name, present: false }
+          })
+        : []
+      return { name: needle, library, machines }
+    },
+
+    async distributeSkill(input) {
+      const config = await configStore.load()
+      const snapshot = await buildSnapshot(config)
+      const needle = (input.skillId ?? input.name ?? '').trim()
+      if (!needle) throw new Error('A skill name or id is required.')
+      const candidates = snapshot.skills.filter(
+        (skill) =>
+          skill.sourceKind === 'Personal' &&
+          (skill.id === needle ||
+            skill.name.toLowerCase() === needle.toLowerCase() ||
+            dirNameOf(skill).toLowerCase() === needle.toLowerCase()),
+      )
+      if (candidates.length === 0) throw new Error(`No library skill named "${needle}". Only global (library) skills can be distributed.`)
+      if (candidates.length > 1) throw new Error(`"${needle}" is ambiguous; pass skillId (one of ${candidates.map((s) => s.id).join(', ')}).`)
+      const dirName = dirNameOf(candidates[0])
+
+      const targets = input.machines?.length ? input.machines : config.machines.map((machine) => machine.name)
+      if (targets.length === 0) throw new Error('No machines configured.')
+
+      const results: DistributeSkillResult['results'] = {}
+      await Promise.all(
+        targets.map(async (name) => {
+          try {
+            const machine = await findMachine(name)
+            let replaced = false
+            if (input.replace) {
+              const current = await machines().snapshot(machine)
+              if (!current.snapshot) throw new Error(current.error ?? 'Machine not reachable.')
+              const existing = current.snapshot.skills.find(
+                (skill) => skill.sourceKind === 'Personal' && dirNameOf(skill) === dirName,
+              )
+              if (existing) {
+                await machines().skillOp(machine, 'remove', existing.id)
+                replaced = true
+              }
+            }
+            const outcome = await this.convergeMachine(name, [dirName])
+            if (outcome.installed.includes(dirName)) results[name] = { status: replaced ? 'replaced' : 'installed' }
+            else if (outcome.failed[dirName]) results[name] = { status: 'failed', error: outcome.failed[dirName] }
+            else results[name] = { status: 'present' }
+          } catch (cause) {
+            results[name] = { status: 'failed', error: cause instanceof Error ? cause.message : String(cause) }
+          }
+        }),
+      )
+      logger.info('skill.distribute', { dirName, results })
+      return { dirName, results, workspace: await buildSnapshot(config) }
     },
 
     async listRepoCatalogs() {
