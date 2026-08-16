@@ -96,6 +96,7 @@ export function Dashboard() {
     machineDiff,
     adoptFromMachine,
     convergeMachine,
+    clearMachine,
     categorizeLibrary,
     setSkillCategory,
     getLogs,
@@ -313,6 +314,7 @@ export function Dashboard() {
             loadDiff={machineDiff}
             onAdopt={(ids) => adoptFromMachine(activeMachineEntry.machine.name, ids)}
             onConverge={(names) => convergeMachine(activeMachineEntry.machine.name, names)}
+            onClear={() => clearMachine(activeMachineEntry.machine.name)}
           />
         ) : activeCatalog ? (
           <RepoBrowser

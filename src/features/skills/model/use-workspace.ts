@@ -57,6 +57,7 @@ export type WorkspaceState = {
   machineDiff: (name: string) => Promise<MachineDiff | null>
   adoptFromMachine: (name: string, skillIds: string[]) => Promise<{ adopted: string[]; failed: Record<string, string> } | null>
   convergeMachine: (name: string, dirNames?: string[]) => Promise<{ installed: string[]; failed: Record<string, string> } | null>
+  clearMachine: (name: string, dirNames?: string[]) => Promise<{ removed: string[]; failed: Record<string, string>; kept: string[] } | null>
   categorizeLibrary: (options?: { force?: boolean }) => Promise<{ categorized: number; uncategorized: number; usedLlm: boolean } | null>
   getLogs: (limit?: number) => Promise<LogEntry[]>
   setSkillCategory: (id: string, category: SkillCategory | null) => Promise<WorkspaceSnapshot | null>
@@ -297,6 +298,21 @@ export function useWorkspace(): WorkspaceState {
 
   const getLogs = useCallback(async (limit?: number) => (await bridge()?.getLogs(limit)) ?? [], [])
 
+  const clearMachine = useCallback(async (name: string, dirNames?: string[]) => {
+    setMachinesLoading(true)
+    try {
+      const result = await bridge()?.clearMachine(name, dirNames)
+      if (!result) return null
+      setSnapshot(result.workspace)
+      setMachineSnapshots((current) =>
+        current.map((entry) => (entry.machine.name === result.machine.machine.name ? result.machine : entry)),
+      )
+      return { removed: result.removed, failed: result.failed, kept: result.kept }
+    } finally {
+      setMachinesLoading(false)
+    }
+  }, [])
+
   const categorizeLibrary = useCallback(async (options?: { force?: boolean }) => {
     setLoading(true)
     try {
@@ -391,6 +407,7 @@ export function useWorkspace(): WorkspaceState {
     machineDiff,
     adoptFromMachine,
     convergeMachine,
+    clearMachine,
     categorizeLibrary,
     setSkillCategory,
     getLogs,

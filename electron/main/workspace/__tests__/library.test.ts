@@ -334,3 +334,70 @@ describe('machine diff, adopt, converge', () => {
     expect((write?.input as { files: unknown[] }).files.length).toBeGreaterThan(0)
   })
 })
+
+describe('clearMachine', () => {
+  let tmp: string
+  let ws: SkillWorkspace
+  let calls: Array<{ command: string; input: unknown }>
+
+  beforeEach(async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-clear-'))
+    calls = []
+    const agentPath = path.join(tmp, 'agent.js')
+    await fs.writeFile(agentPath, '// agent')
+    // Machine holds two skills: 'tdd' (also in library) and 'only-here' (not in library).
+    const machineSkills = ['tdd', 'only-here'].map((name) => ({
+      id: `/home/k/.claude/skills/${name}`, name, description: '', path: `/home/k/.claude/skills/${name}`,
+      realPath: `/home/k/.claude/skills/${name}`, sourceKind: 'Personal', sourceRoot: '~/.claude/skills',
+      displayPath: `~/.claude/skills/${name}`, enabled: true, isFavourite: false, isSymlink: false, fileCount: 1, projects: [],
+    }))
+    const exec: ExecLike = async (_cmd, args, { input }) => {
+      const remote = args[args.length - 1]
+      const ok = (stdout: string): ExecResult => ({ stdout, stderr: '', code: 0 })
+      if (remote.includes('sha256sum')) return ok('missing')
+      if (remote.includes('cat >')) return ok('')
+      const match = /agent\.js ([\w-]+)/.exec(remote)
+      if (!match) return { stdout: '', stderr: 'unexpected', code: 1 }
+      const parsed = input ? JSON.parse(input) : undefined
+      calls.push({ command: match[1], input: parsed })
+      const snap = { skills: machineSkills, projects: [], sources: [], errors: [], scannedAt: '', homeDir: '/home/k' }
+      if (match[1] === 'ping') return ok(JSON.stringify({ ok: true }))
+      return ok(JSON.stringify(snap))
+    }
+    ws = createSkillWorkspace({
+      homeDir: tmp,
+      configStore: createConfigStore(path.join(tmp, 'config.json')),
+      libraryStore: createLibraryStore(path.join(tmp, 'library.json')),
+      fetchImpl: fakeFetch(routes()),
+      agentPath,
+      execImpl: exec,
+    })
+    await ws.addSkillRepo(SLUG)
+    await ws.addMachine({ name: 'tower', host: 'arch-tower', user: 'kellogg' })
+    // Put 'tdd' in the library and record tower as a target.
+    await ws.installOnMachine('tower', { repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  it('removes only library-managed skills, keeps machine-only ones, and drops the syndication target', async () => {
+    const result = await ws.clearMachine('tower')
+    expect(result.removed).toEqual(['tdd'])
+    expect(result.kept).toEqual(['only-here'])
+    expect(result.failed).toEqual({})
+    const uninstalls = calls.filter((call) => call.command === 'uninstall').map((call) => (call.input as { dirName: string }).dirName)
+    expect(uninstalls).toEqual(['tdd']) // never 'only-here'
+    // Library copy intact; target for tower cleared so it can be re-added selectively.
+    await expect(fs.access(path.join(tmp, '.claude', 'skills', 'tdd'))).resolves.toBeUndefined()
+    expect(result.workspace.skills.find((skill) => skill.name === 'tdd')?.library?.targets).toEqual([])
+  })
+
+  it('honours an explicit subset', async () => {
+    const result = await ws.clearMachine('tower', ['only-here'])
+    // Requested a machine-only skill: refused (kept), nothing removed.
+    expect(result.removed).toEqual([])
+    expect(result.kept).toEqual(['only-here'])
+  })
+})

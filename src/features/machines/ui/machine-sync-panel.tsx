@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowDownToLine, ArrowUpFromLine, Check, Loader2, RefreshCw } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, Check, Eraser, Loader2, RefreshCw } from 'lucide-react'
 import type { MachineDiff, SkillRecord } from '@/features/skills/model/skills'
 
 type MachineSyncPanelProps = {
@@ -7,6 +7,7 @@ type MachineSyncPanelProps = {
   loadDiff: (name: string) => Promise<MachineDiff | null>
   onAdopt: (skillIds: string[]) => Promise<{ adopted: string[]; failed: Record<string, string> } | null>
   onConverge: (dirNames: string[]) => Promise<{ installed: string[]; failed: Record<string, string> } | null>
+  onClear: () => Promise<{ removed: string[]; failed: Record<string, string>; kept: string[] } | null>
 }
 
 /**
@@ -14,12 +15,13 @@ type MachineSyncPanelProps = {
  * machine has, install what only the library has. Both flows are bulk-first
  * — this is the onboarding surface for a machine, in either direction.
  */
-export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge }: MachineSyncPanelProps) {
+export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge, onClear }: MachineSyncPanelProps) {
   const [diff, setDiff] = useState<MachineDiff | null>(null)
   const [loading, setLoading] = useState(true)
   const [adoptSel, setAdoptSel] = useState<Set<string>>(new Set())
   const [installSel, setInstallSel] = useState<Set<string>>(new Set())
-  const [busy, setBusy] = useState<'adopt' | 'install' | null>(null)
+  const [busy, setBusy] = useState<'adopt' | 'install' | 'clear' | null>(null)
+  const [confirmClear, setConfirmClear] = useState(false)
   const [report, setReport] = useState<string | null>(null)
   const [failures, setFailures] = useState<Record<string, string>>({})
 
@@ -85,6 +87,27 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge }:
     }
   }
 
+  const runClear = async () => {
+    setConfirmClear(false)
+    setBusy('clear')
+    setFailures({})
+    try {
+      const result = await onClear()
+      if (result) {
+        const parts = [`Removed ${result.removed.length} from ${machineName}`]
+        if (result.kept.length) parts.push(`kept ${result.kept.length} the library has no copy of`)
+        if (Object.keys(result.failed).length) parts.push(`${Object.keys(result.failed).length} failed`)
+        setReport(parts.join(', ') + '. Bring skills back selectively from the list below.')
+        setFailures(result.failed)
+      }
+      await refresh()
+    } catch (cause) {
+      setReport(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   if (loading && !diff) {
     return (
       <div className="flex items-center gap-2 text-[13px] text-[#71717a]">
@@ -133,6 +156,50 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge }:
         <div className="flex items-center gap-2 rounded-xl border border-[#1f3a24] bg-[#0f1a11] px-4 py-3 text-[13px] text-[#4ade80]">
           <Check className="size-4" /> {machineName} and your library match.
         </div>
+      )}
+
+      {diff.inSync > 0 && (
+        <section className="rounded-[13px] border border-[#232328] bg-[#101013]">
+          <div className="flex items-start justify-between gap-4 px-4 py-3">
+            <div>
+              <div className="text-[13.5px] font-semibold text-[#fafafa]">Start clean</div>
+              <div className="mt-0.5 text-[12px] text-[#71717a]">
+                Remove all {diff.inSync} library-managed {diff.inSync === 1 ? 'skill' : 'skills'} from {machineName}, then bring back
+                only the ones you want. Anything only on this machine is left alone — the library couldn't restore it.
+              </div>
+            </div>
+            {confirmClear ? (
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmClear(false)}
+                  className="h-8 rounded-[9px] border border-[#27272a] bg-transparent px-3 text-[12px] font-medium text-[#d4d4d8] transition hover:border-[#3a3a42]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runClear()}
+                  disabled={busy !== null}
+                  className="flex h-8 items-center gap-1.5 rounded-[9px] bg-[#dc2626] px-3 text-[12px] font-semibold text-white transition hover:bg-[#b91c1c] disabled:opacity-60"
+                >
+                  {busy === 'clear' ? <Loader2 className="size-3.5 animate-spin" /> : <Eraser className="size-3.5" />}
+                  Remove {diff.inSync} from {machineName}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmClear(true)}
+                disabled={busy !== null}
+                className="flex h-8 shrink-0 items-center gap-1.5 rounded-[9px] border border-[#3f2020] bg-transparent px-3 text-[12px] font-medium text-[#f87171] transition hover:bg-[#1e1010] disabled:opacity-60"
+              >
+                <Eraser className="size-3.5" />
+                Clear machine…
+              </button>
+            )}
+          </div>
+        </section>
       )}
 
       {diff.onlyOnMachine.length > 0 && (

@@ -92,6 +92,10 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
       if (!id) throw new Error('Missing skill id.')
       return workspace.setSkillCategory(id, (body.category as never) ?? null)
     }],
+    ['POST /api/clear-machine', async (_q, body) => {
+      if (typeof body.name !== 'string') throw new Error('Missing machine name.')
+      return workspace.clearMachine(body.name, Array.isArray(body.dirNames) ? (body.dirNames as string[]) : undefined)
+    }],
     ['POST /api/converge-machine', async (_q, body) => {
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
       return workspace.convergeMachine(body.name, Array.isArray(body.dirNames) ? (body.dirNames as string[]) : undefined)

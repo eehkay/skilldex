@@ -25,6 +25,7 @@ type MachineViewProps = {
   loadDiff: (name: string) => Promise<MachineDiff | null>
   onAdopt: (skillIds: string[]) => Promise<{ adopted: string[]; failed: Record<string, string> } | null>
   onConverge: (dirNames: string[]) => Promise<{ installed: string[]; failed: Record<string, string> } | null>
+  onClear: () => Promise<{ removed: string[]; failed: Record<string, string>; kept: string[] } | null>
 }
 
 /**
@@ -32,7 +33,7 @@ type MachineViewProps = {
  * enable/disable/remove. Read/detail affordances stay local-only for now —
  * this pane is about what's installed where.
  */
-export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillOp, loadDiff, onAdopt, onConverge }: MachineViewProps) {
+export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillOp, loadDiff, onAdopt, onConverge, onClear }: MachineViewProps) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<MachineFilter>('sync')
   const skills = useMemo(
@@ -158,6 +159,7 @@ export function MachineView({ entry, busy, onRefresh, onEdit, onRemove, onSkillO
             loadDiff={loadDiff}
             onAdopt={onAdopt}
             onConverge={onConverge}
+            onClear={onClear}
           />
         ) : visible.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#27272a] px-6 py-14 text-center text-[13px] text-[#71717a]">

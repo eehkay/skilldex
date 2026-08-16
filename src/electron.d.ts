@@ -3,6 +3,7 @@ export {}
 import type {
   AdoptResult,
   CategorizeResult,
+  ClearResult,
   ConvergeResult,
   CreateSkillInput,
   ImportSkillArchiveInput,
@@ -57,6 +58,7 @@ declare global {
         machineDiff(name: string): Promise<MachineDiff>
         adoptFromMachine(name: string, skillIds: string[]): Promise<AdoptResult>
         convergeMachine(name: string, dirNames?: string[]): Promise<ConvergeResult>
+        clearMachine(name: string, dirNames?: string[]): Promise<ClearResult>
         categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
         setSkillCategory(id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
       }

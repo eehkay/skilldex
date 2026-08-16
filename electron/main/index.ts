@@ -126,6 +126,9 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:converge-machine', (_event, name: string, dirNames?: string[]) =>
     workspace.convergeMachine(name, dirNames),
   )
+  ipcMain.handle('skilldex:clear-machine', (_event, name: string, dirNames?: string[]) =>
+    workspace.clearMachine(name, dirNames),
+  )
   ipcMain.handle('skilldex:categorize-library', (_event, options?: { force?: boolean }) =>
     workspace.categorizeLibrary(options),
   )

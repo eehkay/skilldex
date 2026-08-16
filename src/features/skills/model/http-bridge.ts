@@ -16,6 +16,7 @@
 import type {
   AdoptResult,
   CategorizeResult,
+  ClearResult,
   ConvergeResult,
   CreateSkillInput,
   ImportSkillArchiveInput,
@@ -101,6 +102,8 @@ export function createHttpBridge(): WorkspaceBridge {
       call<AdoptResult>('POST', 'adopt-from-machine', { name, skillIds }),
     convergeMachine: (name: string, dirNames?: string[]) =>
       call<ConvergeResult>('POST', 'converge-machine', { name, dirNames }),
+    clearMachine: (name: string, dirNames?: string[]) =>
+      call<ClearResult>('POST', 'clear-machine', { name, dirNames }),
     categorizeLibrary: (options?: { force?: boolean }) =>
       call<CategorizeResult>('POST', 'categorize-library', { force: options?.force ?? false }),
     setSkillCategory: (id: string, category: SkillCategory | null) =>

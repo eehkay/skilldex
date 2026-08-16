@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AdoptResult,
   CategorizeResult,
+  ClearResult,
   ConvergeResult,
   SetSkillEnabledInput,
   SetSkillEnabledResult,
@@ -75,6 +76,8 @@ contextBridge.exposeInMainWorld('skilldex', {
       ipcRenderer.invoke('skilldex:adopt-from-machine', name, skillIds),
     convergeMachine: (name: string, dirNames?: string[]): Promise<ConvergeResult> =>
       ipcRenderer.invoke('skilldex:converge-machine', name, dirNames),
+    clearMachine: (name: string, dirNames?: string[]): Promise<ClearResult> =>
+      ipcRenderer.invoke('skilldex:clear-machine', name, dirNames),
     categorizeLibrary: (options?: { force?: boolean }): Promise<CategorizeResult> =>
       ipcRenderer.invoke('skilldex:categorize-library', options),
     setSkillCategory: (id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot> =>

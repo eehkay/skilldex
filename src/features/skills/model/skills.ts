@@ -237,6 +237,14 @@ export type ConvergeResult = {
   failed: Record<string, string>
 }
 
+export type ClearResult = {
+  workspace: WorkspaceSnapshot
+  machine: MachineSnapshot
+  removed: string[]
+  failed: Record<string, string>
+  kept: string[]
+}
+
 /**
  * UI scope shown on cards and filters. The mockup uses two scopes; we map our
  * three source kinds onto them: Personal → "global", Plugin → "plugin",

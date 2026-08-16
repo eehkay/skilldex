@@ -120,6 +120,15 @@ export type ConvergeResult = {
   failed: Record<string, string>
 }
 
+export type ClearResult = {
+  workspace: WorkspaceSnapshot
+  machine: MachineSnapshot
+  removed: string[]
+  failed: Record<string, string>
+  /** Skills left in place because the library holds no copy (irreversible to remove). */
+  kept: string[]
+}
+
 export type SkillWorkspace = {
   getConfig(): Promise<WorkspaceConfig>
   getSnapshot(): Promise<WorkspaceSnapshot>
@@ -183,6 +192,13 @@ export type SkillWorkspace = {
   adoptFromMachine(name: string, skillIds: string[]): Promise<AdoptResult>
   /** Install every library skill (or the given folder names) missing from a machine. */
   convergeMachine(name: string, dirNames?: string[]): Promise<ConvergeResult>
+  /**
+   * Uninstall library-managed skills from a machine (all of them, or the
+   * given folder names) so they can be brought back selectively. Skills the
+   * library has no copy of are never touched — removing those would be
+   * irreversible.
+   */
+  clearMachine(name: string, dirNames?: string[]): Promise<ClearResult>
   /**
    * Assign categories to library skills that lack one (or all, when force).
    * Manual assignments are never touched. Structural inference is free; the
@@ -987,6 +1003,57 @@ export function createSkillWorkspace({
         ? { machine, snapshot }
         : await machines().snapshot(machine)
       return { workspace: await buildSnapshot(config), machine: machineState, installed, failed }
+    },
+
+    async clearMachine(name, dirNames) {
+      const machine = await findMachine(name)
+      const config = await configStore.load()
+      const remote = await machines().snapshot(machine)
+      if (!remote.snapshot) throw new Error(remote.error ?? `${name} is unreachable.`)
+      const local = await buildSnapshot(config)
+      const libraryNames = new Set(
+        local.skills.filter((skill) => skill.sourceKind === 'Personal').map(dirNameOf),
+      )
+      const ledger = await libraryStore.load()
+
+      const remotePersonal = remote.snapshot.skills.filter((skill) => skill.sourceKind === 'Personal')
+      const wanted = dirNames ? new Set(dirNames) : null
+      const removed: string[] = []
+      const failed: Record<string, string> = {}
+      const kept: string[] = []
+      let snapshot: WorkspaceSnapshot | null = null
+
+      logger.info('sync.clear.start', { machine: name, machinePersonal: remotePersonal.length, requested: dirNames?.length ?? 'all' })
+      for (const skill of remotePersonal) {
+        const dirName = dirNameOf(skill)
+        if (wanted && !wanted.has(dirName)) continue
+        // Only remove what the library can restore.
+        if (!libraryNames.has(dirName)) {
+          kept.push(dirName)
+          logger.debug('sync.clear.kept', { machine: name, skill: dirName, reason: 'not in library' })
+          continue
+        }
+        try {
+          snapshot = await machines().uninstall(machine, { dirName, scope: 'global' })
+          const meta = ledger[dirName]
+          if (meta) {
+            await libraryStore.set(dirName, {
+              ...meta,
+              targets: withoutTarget(meta.targets, { machine: name, scope: 'global' }),
+            })
+          }
+          removed.push(dirName)
+          logger.info('sync.clear.removed', { machine: name, skill: dirName })
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          failed[dirName] = message
+          logger.warn('sync.clear.failed', { machine: name, skill: dirName, error: message })
+        }
+      }
+      logger.info('sync.clear.done', { machine: name, removed: removed.length, failed: Object.keys(failed).length, kept: kept.length })
+
+      const machineState: MachineSnapshot = snapshot ? { machine, snapshot } : await machines().snapshot(machine)
+      return { workspace: await buildSnapshot(config), machine: machineState, removed, failed, kept }
     },
 
     async categorizeLibrary(options = {}) {
