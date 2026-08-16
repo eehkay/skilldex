@@ -89,7 +89,7 @@ export type MachinePlugins = {
   error?: string
 }
 export type PluginOp = 'install' | 'uninstall' | 'enable' | 'disable'
-export type PluginOpInput = { op: PluginOp; plugin: string; marketplaceSource?: string; marketplaceName?: string }
+export type PluginOpInput = { op: PluginOp; plugin: string; marketplaceSource?: string; marketplaceName?: string; scope?: 'user' | 'project' | 'local' }
 
 export type TagChange = { add?: string[]; remove?: string[] }
 export type TagSkillsResult = { workspace: WorkspaceSnapshot; tagged: number; skipped: string[] }

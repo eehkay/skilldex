@@ -246,8 +246,10 @@ async function main(): Promise<void> {
         plugin: string
         marketplaceSource?: string
         marketplaceName?: string
+        scope?: 'user' | 'project' | 'local'
       }
       if (!['install', 'uninstall', 'enable', 'disable'].includes(input.op)) throw new Error(`Unknown plugin op: ${input.op}`)
+      const scope = input.scope && ['user', 'project', 'local'].includes(input.scope) ? input.scope : 'user'
       if (!input.plugin || /\s/.test(input.plugin)) throw new Error('Invalid plugin id.')
       if (input.op === 'install' && input.marketplaceSource && input.marketplaceName) {
         // Add the marketplace first if this machine doesn't know it yet.
@@ -257,8 +259,10 @@ async function main(): Promise<void> {
       }
       const args =
         input.op === 'install'
-          ? ['plugin', 'install', input.plugin, '--scope', 'user', '-y']
-          : ['plugin', input.op, input.plugin]
+          ? ['plugin', 'install', input.plugin, '--scope', scope, '-y']
+          : input.op === 'uninstall'
+            ? ['plugin', 'uninstall', input.plugin, '--scope', scope, '-y']
+            : ['plugin', input.op, input.plugin, '--scope', scope]
       await claudeRun(homeDir, args)
       emit(await pluginInventory(homeDir))
       return

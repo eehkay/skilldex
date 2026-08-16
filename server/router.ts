@@ -117,6 +117,7 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
         plugin: body.plugin,
         ...(typeof body.marketplaceSource === 'string' ? { marketplaceSource: body.marketplaceSource } : {}),
         ...(typeof body.marketplaceName === 'string' ? { marketplaceName: body.marketplaceName } : {}),
+        ...(body.scope === 'user' || body.scope === 'project' || body.scope === 'local' ? { scope: body.scope } : {}),
       })
     }],
     ['POST /api/set-syndication', async (_q, body) => workspace.setSyndication(inputOf(body))],

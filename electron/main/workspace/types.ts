@@ -263,6 +263,8 @@ export type PluginOpInput = {
    */
   marketplaceSource?: string
   marketplaceName?: string
+  /** Which install to act on when a plugin exists at more than one scope (default user). */
+  scope?: 'user' | 'project' | 'local'
 }
 
 export type CreateSkillInput = {

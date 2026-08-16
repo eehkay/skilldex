@@ -191,8 +191,9 @@ export function MachinePluginsPanel({ machineName, skills, loadPlugins, loadFlee
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {inventory.plugins.map((plugin) => {
               const provided = pluginSkillsFor(plugin)
+              const scope = (['user', 'project', 'local'].includes(plugin.scope) ? plugin.scope : 'user') as 'user' | 'project' | 'local'
               return (
-                <div key={plugin.id} className="flex flex-col gap-2.5 rounded-[13px] border border-[#232328] bg-[#101013] p-4">
+                <div key={`${plugin.id}:${plugin.scope}`} className="flex flex-col gap-2.5 rounded-[13px] border border-[#232328] bg-[#101013] p-4">
                   <div className="flex items-start gap-3">
                     <div className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-[#1a1a1e] text-[#a1a1aa]">
                       <Package className="size-4.5" />
@@ -201,6 +202,7 @@ export function MachinePluginsPanel({ machineName, skills, loadPlugins, loadFlee
                       <div className="flex items-center gap-2">
                         <span className="truncate text-[14.5px] font-semibold text-[#fafafa]">{plugin.name}</span>
                         {plugin.version !== 'unknown' && <span className="font-mono text-[11px] text-[#71717a]">v{plugin.version}</span>}
+                        {plugin.scope !== 'user' && <span className="rounded-md border border-[#27272a] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#a1a1aa]">{plugin.scope}</span>}
                         {!plugin.enabled && <span className="rounded-md border border-[#27272a] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#71717a]">disabled</span>}
                       </div>
                       <div className="mt-0.5 flex items-center gap-1 truncate font-mono text-[11px] text-[#52525b]">
@@ -210,7 +212,7 @@ export function MachinePluginsPanel({ machineName, skills, loadPlugins, loadFlee
                     <span className="mt-0.5 flex shrink-0 items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => run({ op: 'uninstall', plugin: plugin.id }, `Uninstalled ${plugin.name}.`)}
+                        onClick={() => run({ op: 'uninstall', plugin: plugin.id, scope }, `Uninstalled ${plugin.name}.`)}
                         disabled={busy !== null}
                         aria-label={`Uninstall ${plugin.name}`}
                         className="grid size-7 place-items-center rounded-lg text-[#52525b] transition hover:bg-[#1e1010] hover:text-[#f87171] disabled:opacity-40"
@@ -223,7 +225,7 @@ export function MachinePluginsPanel({ machineName, skills, loadPlugins, loadFlee
                         onToggle={
                           busy !== null
                             ? undefined
-                            : () => run({ op: plugin.enabled ? 'disable' : 'enable', plugin: plugin.id }, `${plugin.enabled ? 'Disabled' : 'Enabled'} ${plugin.name}.`)
+                            : () => run({ op: plugin.enabled ? 'disable' : 'enable', plugin: plugin.id, scope }, `${plugin.enabled ? 'Disabled' : 'Enabled'} ${plugin.name}.`)
                         }
                       />
                     </span>
