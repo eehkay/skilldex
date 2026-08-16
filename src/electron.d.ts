@@ -4,6 +4,7 @@ import type {
   AdoptResult,
   ApplyUpdatesResult,
   CheckUpdatesResult,
+  LinkOriginsResult,
   OriginCandidate,
   CategorizeResult,
   ClearResult,
@@ -66,6 +67,7 @@ declare global {
         applyUpdates(skillIds?: string[]): Promise<ApplyUpdatesResult>
         findOrigin(id: string): Promise<OriginCandidate[]>
         linkOrigin(id: string, origin: { repo: string; path: string; ref: string }): Promise<WorkspaceSnapshot>
+        linkOrigins(): Promise<LinkOriginsResult>
         categorizeLibrary(options?: { force?: boolean }): Promise<CategorizeResult>
         setSkillCategory(id: string, category: SkillCategory | null): Promise<WorkspaceSnapshot>
       }

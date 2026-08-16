@@ -55,6 +55,7 @@ import {
 } from './skill-archive'
 import type {
   ApplyUpdatesResult,
+  LinkOriginsResult,
   CheckUpdatesResult,
   CreateSkillInput,
   DistributeSkillInput,
@@ -246,6 +247,14 @@ export type SkillWorkspace = {
    */
   linkOrigin(skillId: string, origin: { repo: string; path: string; ref: string }): Promise<WorkspaceSnapshot>
   /**
+   * Run findOrigin across every unpinned library skill and link the ones
+   * whose SKILL.md is byte-identical to a tracked repo's copy. Only exact
+   * matches are linked — a same-name skill that was edited locally is
+   * reported as "likely" so it can be linked deliberately. Safe to re-run;
+   * meant to be run right after adding a source.
+   */
+  linkOrigins(): Promise<LinkOriginsResult>
+  /**
    * Uninstall library-managed skills from a machine (all of them, or the
    * given folder names) so they can be brought back selectively. Skills the
    * library has no copy of are never touched — removing those would be
@@ -336,6 +345,36 @@ export function createSkillWorkspace({
     const scan = await fetchRepoCatalog({ slug }, fetchImpl)
     repoScans.set(slug, scan)
     return scan
+  }
+
+  /** Scan every tracked repo, skipping (and logging) ones that fail. */
+  async function scanTrackedRepos(config: WorkspaceConfig): Promise<RepoScan[]> {
+    const scans: RepoScan[] = []
+    for (const slug of config.skillRepos) {
+      try {
+        scans.push(await scanRepo(slug))
+      } catch (cause) {
+        logger.warn('origin.scanFailed', { repo: slug, error: cause instanceof Error ? cause.message : String(cause) })
+      }
+    }
+    return scans
+  }
+
+  /**
+   * Pin a library skill to a repo origin in the ledger. Files are untouched;
+   * targets, adoption provenance and category survive the re-pin.
+   */
+  async function pinOrigin(dirName: string, origin: { repo: string; path: string; ref: string }): Promise<void> {
+    const existing = (await libraryStore.load())[dirName]
+    await libraryStore.set(dirName, {
+      repo: origin.repo,
+      path: origin.path,
+      ref: origin.ref,
+      targets: existing?.targets ?? [],
+      ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
+      ...(existing?.category ? { category: existing.category, categorySource: existing.categorySource, categoryConfidence: existing.categoryConfidence } : {}),
+    })
+    logger.info('origin.linked', { skill: dirName, repo: origin.repo, ref: origin.ref })
   }
 
   async function catalogsFor(slugs: string[]): Promise<RepoCatalog[]> {
@@ -1286,15 +1325,7 @@ export function createSkillWorkspace({
       const skill = await resolveKnown(skillId)
       if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
       const config = await configStore.load()
-      const scans: RepoScan[] = []
-      for (const slug of config.skillRepos) {
-        try {
-          scans.push(await scanRepo(slug))
-        } catch (cause) {
-          logger.warn('origin.scanFailed', { repo: slug, error: cause instanceof Error ? cause.message : String(cause) })
-        }
-      }
-      const candidates = await findOriginCandidates(skill.realPath, scans, fetchImpl)
+      const candidates = await findOriginCandidates(skill.realPath, await scanTrackedRepos(config), fetchImpl)
       logger.info('origin.search', { skill: dirNameOf(skill), candidates: candidates.map((c) => `${c.repo}:${c.confidence}`) })
       return candidates
     },
@@ -1304,18 +1335,34 @@ export function createSkillWorkspace({
       if (!skill || skill.sourceKind !== 'Personal') throw new Error('Not a library skill.')
       const config = await configStore.load()
       if (!config.skillRepos.includes(origin.repo)) throw new Error('Unknown skill repo.')
-      const dirName = dirNameOf(skill)
-      const existing = (await libraryStore.load())[dirName]
-      await libraryStore.set(dirName, {
-        repo: origin.repo,
-        path: origin.path,
-        ref: origin.ref,
-        targets: existing?.targets ?? [],
-        ...(existing?.adoptedFrom ? { adoptedFrom: existing.adoptedFrom } : {}),
-        ...(existing?.category ? { category: existing.category, categorySource: existing.categorySource, categoryConfidence: existing.categoryConfidence } : {}),
-      })
-      logger.info('origin.linked', { skill: dirName, repo: origin.repo, ref: origin.ref })
+      await pinOrigin(dirNameOf(skill), origin)
       return buildSnapshot(config)
+    },
+
+    async linkOrigins() {
+      const config = await configStore.load()
+      const ledger = await libraryStore.load()
+      const unpinned = (await buildSnapshot(config)).skills.filter(
+        (skill) => skill.sourceKind === 'Personal' && !ledger[dirNameOf(skill)]?.repo,
+      )
+      const scans = await scanTrackedRepos(config)
+      const linked: LinkOriginsResult['linked'] = []
+      const likely: LinkOriginsResult['likely'] = []
+      let unmatched = 0
+      for (const skill of unpinned) {
+        const dirName = dirNameOf(skill)
+        const top = (await findOriginCandidates(skill.realPath, scans, fetchImpl))[0]
+        if (top?.confidence === 'exact') {
+          await pinOrigin(dirName, top)
+          linked.push({ dirName, repo: top.repo })
+        } else if (top?.confidence === 'likely') {
+          likely.push({ dirName, repo: top.repo })
+        } else {
+          unmatched += 1
+        }
+      }
+      logger.info('origin.bulk', { scanned: unpinned.length, linked: linked.length, likely: likely.length, unmatched })
+      return { workspace: await buildSnapshot(config), linked, likely, unmatched, scanned: unpinned.length }
     },
 
     async clearMachine(name, dirNames) {

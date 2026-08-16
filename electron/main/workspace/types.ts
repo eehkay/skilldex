@@ -323,6 +323,19 @@ export type CheckUpdatesResult = {
   errors: Record<string, string>
 }
 
+export type LinkOriginsResult = {
+  workspace: WorkspaceSnapshot
+  /** Skills pinned this run (byte-identical SKILL.md in a tracked repo). */
+  linked: Array<{ dirName: string; repo: string }>
+  /** Skills with a probable origin that was NOT auto-linked — same folder
+   *  name but edited locally. Link these one at a time from the skill page. */
+  likely: Array<{ dirName: string; repo: string }>
+  /** Unpinned skills with no candidate in any tracked repo. */
+  unmatched: number
+  /** Unpinned skills examined. */
+  scanned: number
+}
+
 export type ApplyUpdatesResult = {
   workspace: WorkspaceSnapshot
   updated: string[]

@@ -9,6 +9,7 @@ import {
   type CheckUpdatesResult,
   type LogEntry,
   type MachineRecord,
+  type LinkOriginsResult,
   type OriginCandidate,
   type MachineSnapshot,
   type RepoCatalog,
@@ -64,6 +65,7 @@ export type WorkspaceState = {
   applyUpdates: (skillIds?: string[]) => Promise<{ updated: string[]; failed: Record<string, string>; repushed: Record<string, { ok: string[]; failed: Record<string, string> }> } | null>
   findOrigin: (id: string) => Promise<OriginCandidate[]>
   linkOrigin: (id: string, origin: { repo: string; path: string; ref: string }) => Promise<WorkspaceSnapshot | null>
+  linkOrigins: () => Promise<Omit<LinkOriginsResult, 'workspace'> | null>
   categorizeLibrary: (options?: { force?: boolean }) => Promise<{ categorized: number; uncategorized: number; usedLlm: boolean } | null>
   getLogs: (limit?: number) => Promise<LogEntry[]>
   setSkillCategory: (id: string, category: SkillCategory | null) => Promise<WorkspaceSnapshot | null>
@@ -345,6 +347,24 @@ export function useWorkspace(): WorkspaceState {
     [mutate],
   )
 
+  const linkOrigins = useCallback(async () => {
+    setLoading(true)
+    try {
+      const result = await bridge()?.linkOrigins()
+      if (!result) return null
+      setSnapshot(result.workspace)
+      setError(null)
+      const { workspace: _workspace, ...summary } = result
+      return summary
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      throw new Error(message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   const categorizeLibrary = useCallback(async (options?: { force?: boolean }) => {
     setLoading(true)
     try {
@@ -440,6 +460,7 @@ export function useWorkspace(): WorkspaceState {
     applyUpdates,
     findOrigin,
     linkOrigin,
+    linkOrigins,
     categorizeLibrary,
     setSkillCategory,
     getLogs,

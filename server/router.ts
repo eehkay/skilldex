@@ -134,6 +134,7 @@ export function createApiRoutes(workspace: SkillWorkspace): Map<string, Handler>
       if (!id || !origin || typeof origin.repo !== 'string' || typeof origin.ref !== 'string') throw new Error('Missing id or origin.')
       return workspace.linkOrigin(id, { repo: origin.repo, path: typeof origin.path === 'string' ? origin.path : '', ref: origin.ref })
     }],
+    ['POST /api/link-origins', async () => workspace.linkOrigins()],
     ['POST /api/clear-machine', async (_q, body) => {
       if (typeof body.name !== 'string') throw new Error('Missing machine name.')
       return workspace.clearMachine(body.name, Array.isArray(body.dirNames) ? (body.dirNames as string[]) : undefined)

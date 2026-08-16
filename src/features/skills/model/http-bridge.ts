@@ -17,6 +17,7 @@ import type {
   AdoptResult,
   ApplyUpdatesResult,
   CheckUpdatesResult,
+  LinkOriginsResult,
   OriginCandidate,
   CategorizeResult,
   ClearResult,
@@ -112,6 +113,7 @@ export function createHttpBridge(): WorkspaceBridge {
     findOrigin: (id: string) => call<OriginCandidate[]>('GET', `find-origin?id=${encodeURIComponent(id)}`),
     linkOrigin: (id: string, origin: { repo: string; path: string; ref: string }) =>
       call<WorkspaceSnapshot>('POST', 'link-origin', { id, origin }),
+    linkOrigins: () => call<LinkOriginsResult>('POST', 'link-origins'),
     categorizeLibrary: (options?: { force?: boolean }) =>
       call<CategorizeResult>('POST', 'categorize-library', { force: options?.force ?? false }),
     setSkillCategory: (id: string, category: SkillCategory | null) =>

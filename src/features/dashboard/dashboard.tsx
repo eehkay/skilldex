@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, ArrowUpCircle, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { AlertCircle, ArrowUpCircle, Link2, ListFilter, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import { MachineDialog } from '@/features/machines/ui/machine-dialog'
 import { LogsView } from '@/features/logs/ui/logs-view'
 import { GettingStarted } from '@/features/onboarding/ui/getting-started'
@@ -103,6 +103,7 @@ export function Dashboard() {
     applyUpdates,
     findOrigin,
     linkOrigin,
+    linkOrigins,
     categorizeLibrary,
     setSkillCategory,
     getLogs,
@@ -141,6 +142,7 @@ export function Dashboard() {
   }, [])
   const [categorizing, setCategorizing] = useState(false)
   const [categorizeNote, setCategorizeNote] = useState<string | null>(null)
+  const [linkingOrigins, setLinkingOrigins] = useState(false)
   // null = closed, 'add' = new machine, otherwise the name of the machine being edited.
   const [machineDialog, setMachineDialog] = useState<'add' | string | null>(null)
 
@@ -231,6 +233,31 @@ export function Dashboard() {
     }
     return counts
   }, [scopedSkills])
+
+  // Library skills with no repo pin — adopted originals and anything imported
+  // before origin tracking. Candidates for "Link origins".
+  const unpinnedCount = useMemo(
+    () => skills.filter((skill) => skill.scope === 'global' && skill.sourceKind === 'Personal' && !skill.library?.repo).length,
+    [skills],
+  )
+
+  const runLinkOrigins = async () => {
+    setLinkingOrigins(true)
+    setCategorizeNote(null)
+    try {
+      const result = await linkOrigins()
+      if (result) {
+        const parts = [`${result.linked.length} linked`]
+        if (result.likely.length) parts.push(`${result.likely.length} likely (edited locally — link from the skill page)`)
+        if (result.unmatched) parts.push(`${result.unmatched} not in any tracked repo`)
+        setCategorizeNote(result.scanned === 0 ? 'Every library skill is already pinned.' : parts.join(', '))
+      }
+    } catch (cause) {
+      setCategorizeNote(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setLinkingOrigins(false)
+    }
+  }
 
   const runCategorize = async (force = false) => {
     setCategorizing(true)
@@ -470,6 +497,19 @@ export function Dashboard() {
                   )}
                   <div className="flex-1" />
                   {categorizeNote && <span className="text-[12px] text-[#71717a]">{categorizeNote}</span>}
+                  {unpinnedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void runLinkOrigins()}
+                      disabled={linkingOrigins}
+                      title={`Pin the ${unpinnedCount} unpinned library skill${unpinnedCount === 1 ? '' : 's'} to the tracked repos they came from. Only byte-identical matches are linked; edited skills are reported, not linked.`}
+                      className="flex h-7 items-center gap-1.5 rounded-[8px] border border-[#27272a] bg-[#18181b] px-2.5 text-[12px] font-medium text-[#e4e4e7] transition hover:border-[#3a3a42] disabled:opacity-60"
+                    >
+                      {linkingOrigins ? <Loader2 className="size-3.5 animate-spin" /> : <Link2 className="size-3.5 text-[#60a5fa]" />}
+                      Link origins
+                      <span className="rounded-full bg-[#27272a] px-1.5 text-[10.5px] text-[#a1a1aa]">{unpinnedCount}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void runCategorize(false)}

@@ -135,6 +135,7 @@ app.whenReady().then(() => {
   ipcMain.handle('skilldex:link-origin', (_event, id: string, origin: { repo: string; path: string; ref: string }) =>
     workspace.linkOrigin(id, origin),
   )
+  ipcMain.handle('skilldex:link-origins', () => workspace.linkOrigins())
   ipcMain.handle('skilldex:categorize-library', (_event, options?: { force?: boolean }) =>
     workspace.categorizeLibrary(options),
   )

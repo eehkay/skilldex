@@ -270,6 +270,14 @@ export type OriginCandidate = {
   reason: string
 }
 
+export type LinkOriginsResult = {
+  workspace: WorkspaceSnapshot
+  linked: Array<{ dirName: string; repo: string }>
+  likely: Array<{ dirName: string; repo: string }>
+  unmatched: number
+  scanned: number
+}
+
 export type ClearResult = {
   workspace: WorkspaceSnapshot
   machine: MachineSnapshot

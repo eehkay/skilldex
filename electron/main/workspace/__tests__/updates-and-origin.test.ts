@@ -139,4 +139,33 @@ describe('checkUpdates / applyUpdates / linkOrigin', () => {
     // Now counted among pinned skills.
     expect((await ws.checkUpdates()).checked).toBe(2)
   })
+
+  it('linkOrigins pins only byte-identical matches and reports the rest', async () => {
+    const skillsDir = path.join(tmp, '.claude', 'skills')
+    // An exact copy of the repo's 'other', plus a stranger with no origin.
+    await fs.mkdir(path.join(skillsDir, 'other'))
+    await fs.writeFile(path.join(skillsDir, 'other', 'SKILL.md'), '---\nname: other\ndescription: Other\n---\n')
+    await fs.mkdir(path.join(skillsDir, 'mystery'))
+    await fs.writeFile(path.join(skillsDir, 'mystery', 'SKILL.md'), '---\nname: mystery\ndescription: Mine\n---\n')
+
+    const result = await ws.linkOrigins()
+    expect(result.scanned).toBe(2)
+    expect(result.linked).toEqual([{ dirName: 'other', repo: SLUG }])
+    expect(result.likely).toEqual([])
+    expect(result.unmatched).toBe(1)
+    expect(result.workspace.skills.find((s) => s.name === 'other')?.library).toMatchObject({ repo: SLUG, path: 'skills/other', ref: SHA1 })
+    expect(result.workspace.skills.find((s) => s.name === 'mystery')?.library?.repo ?? '').toBe('')
+
+    // A locally edited twin is reported as likely, never linked.
+    await ws.removeSkill(result.workspace.skills.find((s) => s.name === 'other')!.id)
+    await fs.mkdir(path.join(skillsDir, 'other'))
+    await fs.writeFile(path.join(skillsDir, 'other', 'SKILL.md'), '---\nname: other\ndescription: Other\n---\nlocal notes\n')
+    const again = await ws.linkOrigins()
+    expect(again.linked).toEqual([])
+    expect(again.likely).toEqual([{ dirName: 'other', repo: SLUG }])
+    expect(again.workspace.skills.find((s) => s.name === 'other')?.library?.repo ?? '').toBe('')
+
+    // Idempotent once everything that can be pinned is pinned.
+    expect((await ws.linkOrigins()).linked).toEqual([])
+  })
 })
