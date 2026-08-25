@@ -59,6 +59,9 @@ function normalize(value: unknown): WorkspaceConfig {
     ...(typeof input.anthropicApiKey === 'string' && input.anthropicApiKey.trim()
       ? { anthropicApiKey: input.anthropicApiKey.trim() }
       : {}),
+    ...(typeof input.githubToken === 'string' && input.githubToken.trim()
+      ? { githubToken: input.githubToken.trim() }
+      : {}),
     ...(input.categorizerProvider === 'anthropic' || input.categorizerProvider === 'openrouter'
       ? { categorizerProvider: input.categorizerProvider }
       : {}),

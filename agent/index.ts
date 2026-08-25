@@ -61,7 +61,13 @@ async function main(): Promise<void> {
   const homeDir = os.homedir()
   const configStore = createConfigStore(desktopConfigPath(homeDir))
   const workspace = createSkillWorkspace({ homeDir, configStore })
-  const fetchImpl = globalThis.fetch as unknown as FetchLike
+  // Same rate-limit shield as the hub: attach GITHUB_TOKEN (env) to API calls.
+  const bareFetch = globalThis.fetch as unknown as FetchLike
+  const fetchImpl: FetchLike = async (url, init) => {
+    if (url.startsWith('https://api.github.com') && process.env.GITHUB_TOKEN)
+      init = { ...init, headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } }
+    return bareFetch(url, init)
+  }
 
   switch (command) {
     case 'ping': {

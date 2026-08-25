@@ -181,6 +181,7 @@ export type WorkspaceConfig = {
   anthropicApiKey?: string
   openRouterApiKey?: string
   openRouterModel?: string
+  githubToken?: string
 }
 
 export type CreateSkillInput = {

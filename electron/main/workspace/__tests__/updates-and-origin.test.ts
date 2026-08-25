@@ -170,6 +170,46 @@ describe('checkUpdates / applyUpdates / linkOrigin', () => {
   })
 })
 
+describe('github auth', () => {
+  let tmp: string
+  beforeEach(async () => { tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skilldex-ghauth-')) })
+  afterEach(async () => { await fs.rm(tmp, { recursive: true, force: true }); delete process.env.GITHUB_TOKEN })
+
+  async function seen(configToken?: string, envToken?: string): Promise<Record<string, string | undefined>> {
+    const gh = fakeGitHub()
+    const auth: Record<string, string | undefined> = {}
+    const spy: FetchLike = (url, init) => {
+      auth[new URL(url).host] = init?.headers?.Authorization
+      return gh.impl(url, init)
+    }
+    if (envToken) process.env.GITHUB_TOKEN = envToken
+    const configStore = createConfigStore(path.join(tmp, 'config.json'))
+    if (configToken) await configStore.save({ ...(await configStore.load()), githubToken: configToken })
+    const ws = createSkillWorkspace({
+      homeDir: tmp,
+      configStore,
+      libraryStore: createLibraryStore(path.join(tmp, 'library.json')),
+      fetchImpl: spy,
+    })
+    await ws.addSkillRepo(SLUG)
+    await ws.installRepoSkill({ repo: SLUG, skillId: `${SLUG}:skills/tdd`, scope: 'global' })
+    return auth
+  }
+
+  it('sends the configured token to api.github.com only; env is the fallback; none → no header', async () => {
+    let auth = await seen('cfg-token')
+    expect(auth['api.github.com']).toBe('Bearer cfg-token')
+    expect(auth['raw.githubusercontent.com']).toBeUndefined()
+    await fs.rm(path.join(tmp, 'config.json'), { force: true })
+    auth = await seen(undefined, 'env-token')
+    expect(auth['api.github.com']).toBe('Bearer env-token')
+    await fs.rm(path.join(tmp, 'config.json'), { force: true })
+    delete process.env.GITHUB_TOKEN
+    auth = await seen()
+    expect(auth['api.github.com']).toBeUndefined()
+  })
+})
+
 describe('tags', () => {
   it('normalizes: lowercase, whitespace/underscores → hyphen, junk dropped, deduped, sorted', () => {
     expect(normalizeTag('  Client: Del Mar ')).toBe('client:-del-mar')

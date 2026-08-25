@@ -309,7 +309,7 @@ function assertManageable(skill: SkillRecord | null): asserts skill is SkillReco
 export function createSkillWorkspace({
   homeDir,
   configStore,
-  fetchImpl = globalThis.fetch as unknown as FetchLike,
+  fetchImpl: injectedFetch = globalThis.fetch as unknown as FetchLike,
   agentPath,
   execImpl,
   knownHostsFile,
@@ -317,6 +317,17 @@ export function createSkillWorkspace({
   classifierFactory = createClassifierFromConfig,
   self = {},
 }: SkillWorkspaceDeps): SkillWorkspace {
+  // Every api.github.com call carries the configured token when one exists:
+  // unauthenticated requests share a 60/hour per-IP limit that one update
+  // check across a handful of repos exhausts; any token makes it 5,000/hour.
+  const fetchImpl: FetchLike = async (url, init) => {
+    if (url.startsWith('https://api.github.com')) {
+      const token = (await configStore.load()).githubToken || process.env.GITHUB_TOKEN
+      if (token) init = { ...init, headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${token}` } }
+    }
+    return injectedFetch(url, init)
+  }
+
   const machineManager: MachineManager | null = agentPath
     ? createMachineManager({ agentPath, execImpl, knownHostsFile, selfHost: self.host, selfUser: self.user })
     : null

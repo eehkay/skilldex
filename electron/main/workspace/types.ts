@@ -170,6 +170,13 @@ export type WorkspaceConfig = {
   openRouterApiKey?: string
   /** OpenRouter model id; defaults to anthropic/claude-haiku-4.5. */
   openRouterModel?: string
+  /**
+   * GitHub token for api.github.com calls (repo scans, update checks).
+   * Unauthenticated requests share a 60/hour IP limit that a fleet-sized
+   * check exhausts; any token — no scopes needed for public repos — raises
+   * it to 5,000/hour. Falls back to the GITHUB_TOKEN env var.
+   */
+  githubToken?: string
 }
 
 export type SkillAgent = 'claude' | 'codex'

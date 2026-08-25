@@ -215,6 +215,25 @@ export function SettingsDialog({ open, config, homeDir, onClose, onConfigure, on
             )}
           </section>
 
+          <section className="mt-7">
+            <div className="text-[13px] font-semibold text-[#e4e4e7]">GitHub token</div>
+            <div className="mt-0.5 text-[12px] text-[#71717a]">
+              Repo scans and update checks call the GitHub API, which allows only 60 unauthenticated
+              requests an hour. Any token raises that to 5,000 — for public repos it needs no
+              permissions at all. Can also come from the hub's environment (GITHUB_TOKEN).
+            </div>
+            <div className="mt-3">
+              <ApiKeyField
+                value={config?.githubToken ?? ''}
+                disabled={busy || !config}
+                placeholder="github_pat_… or ghp_…"
+                onSave={(value) =>
+                  config && apply(value ? { ...config, githubToken: value } : { ...config, githubToken: undefined })
+                }
+              />
+            </div>
+          </section>
+
           {error && <p className="mt-4 text-[12.5px] text-[#f87171]">{error}</p>}
         </div>
 
