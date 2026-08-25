@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowDownToLine, ArrowUpFromLine, Check, Eraser, Loader2, RefreshCw } from 'lucide-react'
-import { dirNameOf as dirNameOfPath, type MachineDiff, type SkillRecord } from '@/features/skills/model/skills'
+import { CATEGORY_LABELS, CATEGORY_ORDER, dirNameOf as dirNameOfPath, type MachineDiff, type SkillCategory, type SkillRecord } from '@/features/skills/model/skills'
 
 type MachineSyncPanelProps = {
   machineName: string
@@ -213,8 +213,8 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge, o
           keyOf={(skill) => skill.id}
           selected={adoptSel}
           onToggle={(key) => toggle(adoptSel, setAdoptSel, key)}
-          onAll={() => setAdoptSel(new Set(diff.onlyOnMachine.map((skill) => skill.id)))}
-          onNone={() => setAdoptSel(new Set())}
+          onSelect={(keys) => setAdoptSel(new Set([...adoptSel, ...keys]))}
+          onDeselect={(keys) => setAdoptSel(new Set([...adoptSel].filter((key) => !keys.includes(key))))}
           action={{
             icon: <ArrowDownToLine className="size-3.5" />,
             label: `Adopt into library (${adoptSel.size})`,
@@ -234,8 +234,8 @@ export function MachineSyncPanel({ machineName, loadDiff, onAdopt, onConverge, o
           keyOf={dirNameOf}
           selected={installSel}
           onToggle={(key) => toggle(installSel, setInstallSel, key)}
-          onAll={() => setInstallSel(new Set(diff.onlyInLibrary.map(dirNameOf)))}
-          onNone={() => setInstallSel(new Set())}
+          onSelect={(keys) => setInstallSel(new Set([...installSel, ...keys]))}
+          onDeselect={(keys) => setInstallSel(new Set([...installSel].filter((key) => !keys.includes(key))))}
           action={{
             icon: <ArrowUpFromLine className="size-3.5" />,
             label: `Install on ${machineName} (${installSel.size})`,
@@ -257,8 +257,8 @@ function DiffSection({
   keyOf,
   selected,
   onToggle,
-  onAll,
-  onNone,
+  onSelect,
+  onDeselect,
   action,
   badge,
 }: {
@@ -268,11 +268,73 @@ function DiffSection({
   keyOf: (skill: SkillRecord) => string
   selected: Set<string>
   onToggle: (key: string) => void
-  onAll: () => void
-  onNone: () => void
+  /** Add these keys to the selection (All, scoped to the current filter). */
+  onSelect: (keys: string[]) => void
+  /** Drop these keys from the selection (None, scoped to the current filter). */
+  onDeselect: (keys: string[]) => void
   action: { icon: React.ReactNode; label: string; busy: boolean; disabled: boolean; onClick: () => void }
   badge: (skill: SkillRecord) => string
 }) {
+  // Library-style narrowing: search + category / tag / origin chips. All
+  // client-side — the diff rows already carry the ledger metadata.
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<SkillCategory | null>(null)
+  const [tag, setTag] = useState<string | null>(null)
+  const [origin, setOrigin] = useState<'repo' | 'original' | null>(null)
+
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<SkillCategory, number>()
+    for (const skill of skills) {
+      const value = skill.library?.category
+      if (value) counts.set(value, (counts.get(value) ?? 0) + 1)
+    }
+    return counts
+  }, [skills])
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const skill of skills) for (const t of skill.library?.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1)
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [skills])
+  const originCounts = useMemo(() => {
+    let repo = 0
+    for (const skill of skills) if (skill.library?.repo) repo += 1
+    return { repo, original: skills.length - repo }
+  }, [skills])
+
+  const visible = useMemo(() => {
+    let result = skills
+    if (category) result = result.filter((skill) => skill.library?.category === category)
+    if (tag) result = result.filter((skill) => skill.library?.tags?.includes(tag))
+    if (origin) result = result.filter((skill) => (skill.library?.repo ? 'repo' : 'original') === origin)
+    const q = query.trim().toLowerCase()
+    if (q)
+      result = result.filter((skill) =>
+        [skill.name, skill.description, skill.library?.repo ?? '', ...(skill.library?.tags ?? [])].join(' ').toLowerCase().includes(q),
+      )
+    return result
+  }, [skills, category, tag, origin, query])
+
+  const filtered = visible.length !== skills.length
+  const visibleKeys = visible.map(keyOf)
+  const selectedShown = visibleKeys.filter((key) => selected.has(key)).length
+  const hasChips = categoryCounts.size > 0 || tagCounts.length > 0 || (originCounts.repo > 0 && originCounts.original > 0)
+
+  const chip = (label: string, active: boolean, onClick: () => void, count?: number) => (
+    <button
+      key={label}
+      type="button"
+      onClick={onClick}
+      className={`flex h-6 items-center gap-1 rounded-full border px-2 text-[11.5px] font-medium transition ${
+        active
+          ? 'border-[#f97316] bg-[#1a1109] text-[#fb923c]'
+          : 'border-[#27272a] bg-[#111114] text-[#a1a1aa] hover:border-[#3a3a42] hover:text-[#e4e4e7]'
+      }`}
+    >
+      {label}
+      {typeof count === 'number' && <span className="font-mono text-[10px] opacity-60">{count}</span>}
+    </button>
+  )
+
   return (
     <section className="rounded-[13px] border border-[#232328] bg-[#101013]">
       <div className="flex items-start justify-between gap-4 border-b border-[#1c1c20] px-4 py-3">
@@ -281,13 +343,51 @@ function DiffSection({
           <div className="mt-0.5 text-[12px] text-[#71717a]">{hint}</div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button type="button" onClick={onAll} className="text-[12px] text-[#a1a1aa] hover:text-[#e4e4e7]">All</button>
+          <span className="text-[11.5px] text-[#52525b]">
+            {selectedShown}/{visible.length}{filtered ? ' shown' : ''} selected
+          </span>
+          <button type="button" onClick={() => onSelect(visibleKeys)} className="text-[12px] text-[#a1a1aa] hover:text-[#e4e4e7]">
+            {filtered ? 'All shown' : 'All'}
+          </button>
           <span className="text-[#3a3a42]">·</span>
-          <button type="button" onClick={onNone} className="text-[12px] text-[#a1a1aa] hover:text-[#e4e4e7]">None</button>
+          <button type="button" onClick={() => onDeselect(visibleKeys)} className="text-[12px] text-[#a1a1aa] hover:text-[#e4e4e7]">
+            {filtered ? 'None shown' : 'None'}
+          </button>
         </div>
       </div>
-      <div className="max-h-[320px] overflow-y-auto">
-        {skills.map((skill) => {
+
+      {(skills.length > 8 || hasChips) && (
+        <div className="flex flex-col gap-2 border-b border-[#1c1c20] px-4 py-2.5">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`Search ${skills.length} skills…`}
+            className="h-7 w-full max-w-[280px] rounded-[8px] border border-[#27272a] bg-[#0c0c0e] px-2.5 text-[12px] text-[#e4e4e7] outline-none placeholder:text-[#3f3f46] focus:border-[#3a3a42]"
+          />
+          {hasChips && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {originCounts.repo > 0 && originCounts.original > 0 && (
+                <>
+                  {chip('From repos', origin === 'repo', () => setOrigin(origin === 'repo' ? null : 'repo'), originCounts.repo)}
+                  {chip('Originals', origin === 'original', () => setOrigin(origin === 'original' ? null : 'original'), originCounts.original)}
+                  {(categoryCounts.size > 0 || tagCounts.length > 0) && <span className="mx-0.5 h-4 w-px bg-[#27272a]" />}
+                </>
+              )}
+              {CATEGORY_ORDER.filter((key) => (categoryCounts.get(key) ?? 0) > 0).map((key) =>
+                chip(CATEGORY_LABELS[key], category === key, () => setCategory(category === key ? null : key), categoryCounts.get(key)),
+              )}
+              {tagCounts.length > 0 && categoryCounts.size > 0 && <span className="mx-0.5 h-4 w-px bg-[#27272a]" />}
+              {tagCounts.map(([value, count]) => chip(`#${value}`, tag === value, () => setTag(tag === value ? null : value), count))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="max-h-[440px] overflow-y-auto">
+        {visible.length === 0 && (
+          <div className="px-4 py-8 text-center text-[12.5px] text-[#71717a]">Nothing matches the current filter.</div>
+        )}
+        {visible.map((skill) => {
           const key = keyOf(skill)
           return (
             <label
